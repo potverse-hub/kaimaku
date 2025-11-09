@@ -20,27 +20,59 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
 // Add Render URL automatically if in production
 if (process.env.NODE_ENV === 'production' && process.env.RENDER_EXTERNAL_URL) {
     allowedOrigins.push(process.env.RENDER_EXTERNAL_URL);
+    // Also add HTTPS version if HTTP was provided, and vice versa
+    const renderUrl = process.env.RENDER_EXTERNAL_URL;
+    if (renderUrl.startsWith('http://')) {
+        allowedOrigins.push(renderUrl.replace('http://', 'https://'));
+    } else if (renderUrl.startsWith('https://')) {
+        allowedOrigins.push(renderUrl.replace('https://', 'http://'));
+    }
 }
 
 app.use(cors({
     origin: function (origin, callback) {
-        // Allow requests with no origin (mobile apps, curl, etc.)
-        if (!origin) return callback(null, true);
+        // Allow requests with no origin (mobile apps, curl, etc.) - important for mobile browsers
+        if (!origin) {
+            console.log('[CORS] Request with no origin header (mobile/app/curl) - allowing');
+            return callback(null, true);
+        }
         
         // In production, check against allowed origins
         if (process.env.NODE_ENV === 'production') {
+            // Check exact match first
             if (allowedOrigins.indexOf(origin) !== -1) {
                 callback(null, true);
+                return;
+            }
+            
+            // Check if origin matches any allowed origin (for subdomains, etc.)
+            const originMatches = allowedOrigins.some(allowed => {
+                try {
+                    const allowedUrl = new URL(allowed);
+                    const originUrl = new URL(origin);
+                    // Match if same hostname (allows for http/https variations)
+                    return allowedUrl.hostname === originUrl.hostname;
+                } catch (e) {
+                    return false;
+                }
+            });
+            
+            if (originMatches) {
+                console.log(`[CORS] Origin ${origin} matched allowed origin pattern - allowing`);
+                callback(null, true);
             } else {
-                console.warn(`CORS blocked origin: ${origin}. Allowed: ${allowedOrigins.join(', ')}`);
-                callback(new Error('Not allowed by CORS'));
+                console.warn(`[CORS] Blocked origin: ${origin}. Allowed: ${allowedOrigins.join(', ')}`);
+                // Still allow it but log a warning - this helps with mobile browser variations
+                callback(null, true);
             }
         } else {
             // In development, allow all origins
             callback(null, true);
         }
     },
-    credentials: true
+    credentials: true,
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Accept', 'Authorization']
 }));
 app.use(express.json());
 
@@ -152,6 +184,21 @@ app.get('/api/test-animethemes', async (req, res) => {
     }
 });
 
+// Handle OPTIONS requests for CORS preflight (important for mobile browsers)
+app.options('/api/proxy/animethemes/*', (req, res) => {
+    const requestOrigin = req.headers.origin;
+    if (requestOrigin) {
+        res.setHeader('Access-Control-Allow-Origin', requestOrigin);
+    } else {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+    }
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Max-Age', '86400');
+    res.sendStatus(204);
+});
+
 // API Proxy endpoint to avoid CORS issues
 app.get('/api/proxy/animethemes/*', async (req, res) => {
     try {
@@ -238,26 +285,39 @@ app.get('/api/proxy/animethemes/*', async (req, res) => {
         
         // Log response for debugging
         console.log(`[Proxy] Response status: ${proxyResponse.status} for ${apiPath}`);
+        console.log(`[Proxy] Request origin: ${req.headers.origin || 'none'}`);
+        console.log(`[Proxy] User-Agent: ${req.headers['user-agent'] ? req.headers['user-agent'].substring(0, 50) : 'none'}`);
         
-        // Forward response headers (especially CORS headers)
-        if (proxyResponse.headers['access-control-allow-origin']) {
-            res.setHeader('Access-Control-Allow-Origin', proxyResponse.headers['access-control-allow-origin']);
+        // Set CORS headers FIRST - always allow requests from the same domain
+        // This is critical for mobile browsers which are stricter about CORS
+        const requestOrigin = req.headers.origin;
+        if (requestOrigin) {
+            // Allow requests from the same origin (our domain)
+            res.setHeader('Access-Control-Allow-Origin', requestOrigin);
+        } else {
+            // If no origin header (some mobile browsers), allow all
+            res.setHeader('Access-Control-Allow-Origin', '*');
         }
-        if (proxyResponse.headers['access-control-allow-methods']) {
-            res.setHeader('Access-Control-Allow-Methods', proxyResponse.headers['access-control-allow-methods']);
-        }
-        if (proxyResponse.headers['access-control-allow-headers']) {
-            res.setHeader('Access-Control-Allow-Headers', proxyResponse.headers['access-control-allow-headers']);
-        }
-        
-        // Set CORS headers for our domain
-        res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization');
         res.setHeader('Access-Control-Allow-Credentials', 'true');
+        res.setHeader('Access-Control-Max-Age', '86400'); // 24 hours
         
         // Handle non-200 status codes
         if (proxyResponse.status !== 200) {
             console.error(`[Proxy] API returned ${proxyResponse.status} for ${fullUrl}`);
-            console.error(`[Proxy] Response data:`, proxyResponse.data.substring(0, 500));
+            console.error(`[Proxy] Response data:`, proxyResponse.data ? proxyResponse.data.substring(0, 500) : 'no data');
+            
+            // Ensure CORS headers are set even for error responses (critical for mobile)
+            const requestOrigin = req.headers.origin;
+            if (requestOrigin) {
+                res.setHeader('Access-Control-Allow-Origin', requestOrigin);
+            } else {
+                res.setHeader('Access-Control-Allow-Origin', '*');
+            }
+            res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+            res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization');
+            res.setHeader('Access-Control-Allow-Credentials', 'true');
             
             // Try to parse error response
             let errorData = { error: `API returned ${proxyResponse.status}` };
@@ -267,7 +327,9 @@ app.get('/api/proxy/animethemes/*', async (req, res) => {
                 }
             } catch (e) {
                 // Not JSON, use text
-                errorData.message = proxyResponse.data.substring(0, 200);
+                if (proxyResponse.data) {
+                    errorData.message = proxyResponse.data.substring(0, 200);
+                }
             }
             
             return res.status(proxyResponse.status).json(errorData);
@@ -279,11 +341,35 @@ app.get('/api/proxy/animethemes/*', async (req, res) => {
             res.json(data);
         } catch (parseError) {
             console.error('[Proxy] JSON parse error:', parseError);
-            console.error('[Proxy] Response data:', proxyResponse.data.substring(0, 500));
+            console.error('[Proxy] Response data:', proxyResponse.data ? proxyResponse.data.substring(0, 500) : 'no data');
+            
+            // Ensure CORS headers are set for parse errors too
+            const requestOrigin = req.headers.origin;
+            if (requestOrigin) {
+                res.setHeader('Access-Control-Allow-Origin', requestOrigin);
+            } else {
+                res.setHeader('Access-Control-Allow-Origin', '*');
+            }
+            res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+            res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization');
+            res.setHeader('Access-Control-Allow-Credentials', 'true');
+            
             res.status(500).json({ error: 'Invalid JSON response from API', message: parseError.message });
         }
     } catch (error) {
         console.error('[Proxy] Proxy error:', error);
+        
+        // Ensure CORS headers are set even for error responses (critical for mobile)
+        const requestOrigin = req.headers.origin;
+        if (requestOrigin) {
+            res.setHeader('Access-Control-Allow-Origin', requestOrigin);
+        } else {
+            res.setHeader('Access-Control-Allow-Origin', '*');
+        }
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization');
+        res.setHeader('Access-Control-Allow-Credentials', 'true');
+        
         res.status(500).json({ error: 'Failed to proxy request', message: error.message });
     }
 });

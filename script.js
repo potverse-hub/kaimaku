@@ -18,6 +18,17 @@ const API_DIRECT = 'https://api.animethemes.moe';
 // Track if we should use direct API as fallback
 let useDirectAPI = false;
 
+// Detect if we're on a mobile device
+const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+                 (window.matchMedia && window.matchMedia('(max-width: 768px)').matches) ||
+                 ('ontouchstart' in window);
+
+// On mobile, never use direct API (will always fail with CORS)
+if (isMobile) {
+    console.log('[Mobile] Detected mobile device - will only use proxy, never direct API');
+    useDirectAPI = false;
+}
+
 // Local Database Configuration
 // Uses a simple Node.js server that stores data in ratings.json
 // Make sure to run: npm install && npm start
@@ -388,8 +399,13 @@ async function fetchWithFallback(url, options = {}) {
     try {
         const response = await fetch(url, options);
         
-        // If proxy returns 403, try direct API (only in production)
-        if (response.status === 403 && API_BASE !== API_DIRECT && url.includes(API_BASE)) {
+        // On mobile, never try direct API fallback (will always fail with CORS)
+        if (isMobile) {
+            return response;
+        }
+        
+        // If proxy returns 403, try direct API (only on desktop, only in production)
+        if (response.status === 403 && API_BASE !== API_DIRECT && url.includes(API_BASE) && !isMobile) {
             console.warn(`[Proxy] Received 403, trying direct API as fallback...`);
             const directUrl = url.replace(API_BASE, API_DIRECT);
             console.log(`[Fallback] Trying direct API:`, directUrl);
@@ -412,8 +428,13 @@ async function fetchWithFallback(url, options = {}) {
         
         return response;
     } catch (error) {
-        // If proxy fails and we're in production, try direct API
-        if (API_BASE !== API_DIRECT && url.includes(API_BASE) && error.message.includes('Failed to fetch')) {
+        // On mobile, never try direct API fallback
+        if (isMobile) {
+            throw error;
+        }
+        
+        // If proxy fails and we're in production (and not mobile), try direct API
+        if (API_BASE !== API_DIRECT && url.includes(API_BASE) && error.message.includes('Failed to fetch') && !isMobile) {
             console.warn(`[Proxy] Request failed, trying direct API as fallback...`);
             const directUrl = url.replace(API_BASE, API_DIRECT);
             try {
