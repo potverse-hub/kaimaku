@@ -1578,10 +1578,35 @@ async function saveRatingToDatabase(themeId, rating, metadata) {
         if (response.ok) {
             return true;
         } else if (response.status === 401) {
-            showNotification('Please login to save ratings');
-            currentUser = null;
-            updateAuthUI();
-            return false;
+            // Don't immediately log out - check authentication first
+            console.warn('Rating save returned 401, checking authentication...');
+            try {
+                const authCheck = await fetch(`${API_BASE_URL}/me`, {
+                    method: 'GET',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                if (authCheck.ok) {
+                    // Still authenticated, might be a different issue
+                    const authData = await authCheck.json();
+                    currentUser = authData.username;
+                    updateAuthUI();
+                    showNotification('Failed to save rating. Please try again.');
+                    return false;
+                } else {
+                    // Actually logged out
+                    showNotification('Session expired. Please login again to save ratings');
+                    currentUser = null;
+                    updateAuthUI();
+                    return false;
+                }
+            } catch (authError) {
+                // Auth check failed, assume we're still logged in but there was an error
+                console.error('Error checking authentication:', authError);
+                showNotification('Failed to save rating. Please try again.');
+                return false;
+            }
         } else {
             throw new Error('Failed to save rating');
         }
