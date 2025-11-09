@@ -776,42 +776,36 @@ body.light-theme .navbar {
 .op-rating.rating-low {
     background: linear-gradient(135deg, #ff4444, #ff6b6b);
     -webkit-background-clip: text;
-    background-clip: text;
     -webkit-text-fill-color: transparent;
 }
 
 .op-rating.rating-medium-low {
     background: linear-gradient(135deg, #ff8800, #ffaa44);
     -webkit-background-clip: text;
-    background-clip: text;
     -webkit-text-fill-color: transparent;
 }
 
 .op-rating.rating-medium {
     background: linear-gradient(135deg, #ffd700, #ffed4e);
     -webkit-background-clip: text;
-    background-clip: text;
     -webkit-text-fill-color: transparent;
 }
 
 .op-rating.rating-medium-high {
     background: linear-gradient(135deg, #88ff44, #aaff66);
     -webkit-background-clip: text;
-    background-clip: text;
     -webkit-text-fill-color: transparent;
 }
 
 .op-rating.rating-high {
     background: linear-gradient(135deg, #44ff88, #66ffaa);
     -webkit-background-clip: text;
-    background-clip: text;
     -webkit-text-fill-color: transparent;
 }
 
 .op-rating.rating-excellent {
     background: linear-gradient(135deg, #00d4ff, #44ffdd);
     -webkit-background-clip: text;
-    background-clip: text;
     -webkit-text-fill-color: transparent;
 }
 

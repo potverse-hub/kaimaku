@@ -1,46 +1,47 @@
-// PostgreSQL database connection and operations
+// PostgreSQL database connection and queries
 const { Pool } = require('pg');
 
 // Create connection pool
+if (!process.env.DATABASE_URL) {
+    console.error('❌ DATABASE_URL environment variable is not set!');
+    console.error('💡 Please set DATABASE_URL to your PostgreSQL connection string');
+    console.error('💡 For Supabase: Get it from Settings → Database → Connection string');
+}
+
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-    max: 20, // Maximum number of clients in the pool
-    idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
-    connectionTimeoutMillis: 10000, // Return an error after 10 seconds if connection could not be established
-    statement_timeout: 10000, // Return an error after 10 seconds if query doesn't complete
-    query_timeout: 10000 // Return an error after 10 seconds if query doesn't complete
+    connectionTimeoutMillis: 20000, // 20 second timeout (increased for Supabase)
+    idleTimeoutMillis: 30000,
+    max: 10, // Reduced for Supabase connection pooling
+    // Supabase connection pooling settings
+    statement_timeout: 30000,
+    query_timeout: 30000
 });
 
-// Test database connection
-async function testConnection() {
-    try {
-        const client = await pool.connect();
-        console.log('✅ Database connection successful');
-        client.release();
-        return true;
-    } catch (error) {
-        console.error('❌ Database connection failed:', error.message);
-        return false;
-    }
-}
+// Test connection
+pool.on('error', (err) => {
+    console.error('❌ Unexpected database error:', err);
+});
+
+pool.on('connect', () => {
+    console.log('✅ Connected to PostgreSQL database');
+});
 
 // Initialize database tables
 async function initializeDatabase() {
     try {
+        // Test database connection first
         console.log('🔄 Testing database connection...');
-        const connected = await testConnection();
-        if (!connected) {
-            throw new Error('Database connection failed');
-        }
-
-        console.log('🔄 Creating database tables...');
-
+        await pool.query('SELECT NOW()');
+        console.log('✅ Database connection successful');
+        
         // Create users table
+        console.log('🔄 Creating users table...');
         await pool.query(`
             CREATE TABLE IF NOT EXISTS users (
-                username VARCHAR(255) PRIMARY KEY,
-                password_hash VARCHAR(255) NOT NULL,
+                username VARCHAR(50) PRIMARY KEY,
+                password_hash TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         `);
@@ -50,61 +51,60 @@ async function initializeDatabase() {
             CREATE TABLE IF NOT EXISTS ratings (
                 id SERIAL PRIMARY KEY,
                 theme_id VARCHAR(255) NOT NULL,
-                user_id VARCHAR(255) NOT NULL REFERENCES users(username) ON DELETE CASCADE,
+                user_id VARCHAR(50) NOT NULL,
                 rating DECIMAL(3,1) NOT NULL CHECK (rating >= 0 AND rating <= 10),
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 anime_name VARCHAR(500),
-                anime_slug VARCHAR(500),
+                anime_slug VARCHAR(255),
                 theme_sequence INTEGER,
-                UNIQUE(theme_id, user_id)
+                timestamp BIGINT NOT NULL,
+                CONSTRAINT unique_theme_user UNIQUE(theme_id, user_id)
             )
         `);
 
-        // Create index on theme_id for faster lookups
+        // Create index for faster queries
+        console.log('🔄 Creating indexes...');
         await pool.query(`
             CREATE INDEX IF NOT EXISTS idx_ratings_theme_id ON ratings(theme_id)
         `);
-
-        // Create index on user_id for faster lookups
         await pool.query(`
             CREATE INDEX IF NOT EXISTS idx_ratings_user_id ON ratings(user_id)
         `);
 
-        // Create user_sessions table (for connect-pg-simple)
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS user_sessions (
-                sid VARCHAR NOT NULL COLLATE "default",
-                sess JSON NOT NULL,
-                expire TIMESTAMP(6) NOT NULL
+        // Note: user_sessions table is created by connect-pg-simple
+        // But we can verify it exists
+        console.log('🔄 Verifying session table...');
+        const sessionTableCheck = await pool.query(`
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'user_sessions'
             )
-            WITH (OIDS=FALSE)
         `);
+        
+        if (sessionTableCheck.rows[0].exists) {
+            console.log('✅ Session table exists');
+        } else {
+            console.log('⚠️  Session table does not exist yet (will be created by connect-pg-simple)');
+        }
 
-        // Create index on sid
-        await pool.query(`
-            CREATE INDEX IF NOT EXISTS idx_user_sessions_sid ON user_sessions(sid)
-        `);
-
-        // Create index on expire for automatic cleanup
-        await pool.query(`
-            CREATE INDEX IF NOT EXISTS idx_user_sessions_expire ON user_sessions(expire)
-        `);
-
-        console.log('✅ Database tables created successfully');
+        console.log('✅ Database tables initialized successfully');
         return true;
     } catch (error) {
         console.error('❌ Error initializing database:', error);
-        throw error;
+        console.error('Error message:', error.message);
+        console.error('Error code:', error.code);
+        if (error.message && error.message.includes('connect')) {
+            console.error('💡 Check your DATABASE_URL connection string');
+            console.error('💡 Make sure your Supabase project is active');
+        }
+        return false;
     }
 }
 
-// Get user by username
+// User functions
 async function getUser(username) {
     try {
-        const result = await pool.query(
-            'SELECT username, password_hash FROM users WHERE username = $1',
-            [username]
-        );
+        const result = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
         return result.rows[0] || null;
     } catch (error) {
         console.error('Error getting user:', error);
@@ -112,59 +112,83 @@ async function getUser(username) {
     }
 }
 
-// Create new user
 async function createUser(username, passwordHash) {
     try {
         await pool.query(
-            'INSERT INTO users (username, password_hash) VALUES ($1, $2)',
+            'INSERT INTO users (username, password_hash) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING',
             [username, passwordHash]
         );
-        return { username, password_hash: passwordHash };
+        return true;
     } catch (error) {
         console.error('Error creating user:', error);
         throw error;
     }
 }
 
-// Get all ratings (aggregated by theme_id)
+// Rating functions
 async function getRatings() {
     try {
-        const result = await pool.query(`
+        // Get all individual ratings
+        const ratingsResult = await pool.query('SELECT * FROM ratings');
+        const ratings = {};
+        ratingsResult.rows.forEach(row => {
+            const key = `${row.theme_id}_${row.user_id}`;
+            ratings[key] = {
+                themeId: row.theme_id,
+                rating: parseFloat(row.rating),
+                userId: row.user_id,
+                timestamp: row.timestamp,
+                animeName: row.anime_name,
+                animeSlug: row.anime_slug,
+                themeSequence: row.theme_sequence
+            };
+        });
+
+        // Calculate aggregated ratings per theme
+        const themeRatingsResult = await pool.query(`
             SELECT 
                 theme_id,
-                COUNT(*) as rating_count,
-                AVG(rating) as average_rating,
-                MIN(rating) as min_rating,
-                MAX(rating) as max_rating
+                COUNT(*) as count,
+                AVG(rating) as average,
+                MAX(anime_name) as anime_name,
+                MAX(anime_slug) as anime_slug,
+                MAX(theme_sequence) as theme_sequence,
+                MAX(timestamp) as last_updated
             FROM ratings
             GROUP BY theme_id
         `);
 
-        const ratings = {};
-        result.rows.forEach(row => {
-            ratings[row.theme_id] = {
-                count: parseInt(row.rating_count),
-                average: parseFloat(row.average_rating),
-                min: parseFloat(row.min_rating),
-                max: parseFloat(row.max_rating)
+        const themeRatings = {};
+        themeRatingsResult.rows.forEach(row => {
+            themeRatings[row.theme_id] = {
+                themeId: row.theme_id,
+                count: parseInt(row.count),
+                average: parseFloat(row.average),
+                animeName: row.anime_name,
+                animeSlug: row.anime_slug,
+                themeSequence: row.theme_sequence,
+                lastUpdated: row.last_updated
             };
         });
 
-        return ratings;
+        return {
+            ratings,
+            themeRatings,
+            lastUpdated: Date.now()
+        };
     } catch (error) {
         console.error('Error getting ratings:', error);
         throw error;
     }
 }
 
-// Get user-specific ratings
 async function getUserRatings(userId) {
     try {
         const result = await pool.query(
             'SELECT theme_id, rating, timestamp, anime_name, anime_slug, theme_sequence FROM ratings WHERE user_id = $1',
             [userId]
         );
-
+        
         const ratings = {};
         result.rows.forEach(row => {
             ratings[row.theme_id] = {
@@ -175,7 +199,7 @@ async function getUserRatings(userId) {
                 themeSequence: row.theme_sequence
             };
         });
-
+        
         return ratings;
     } catch (error) {
         console.error('Error getting user ratings:', error);
@@ -183,50 +207,58 @@ async function getUserRatings(userId) {
     }
 }
 
-// Save or update a rating
-async function saveRating(themeId, userId, rating, metadata = {}) {
+async function saveRating(themeId, userId, rating, metadata) {
     try {
-        // Insert or update rating (upsert)
-        const result = await pool.query(`
-            INSERT INTO ratings (theme_id, user_id, rating, anime_name, anime_slug, theme_sequence)
-            VALUES ($1, $2, $3, $4, $5, $6)
+        // Insert or update rating
+        await pool.query(`
+            INSERT INTO ratings (theme_id, user_id, rating, anime_name, anime_slug, theme_sequence, timestamp)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             ON CONFLICT (theme_id, user_id)
             DO UPDATE SET 
                 rating = EXCLUDED.rating,
-                timestamp = CURRENT_TIMESTAMP,
+                timestamp = EXCLUDED.timestamp,
                 anime_name = EXCLUDED.anime_name,
                 anime_slug = EXCLUDED.anime_slug,
                 theme_sequence = EXCLUDED.theme_sequence
-            RETURNING *
         `, [
             themeId,
             userId,
             rating,
-            metadata.animeName || null,
-            metadata.animeSlug || null,
-            metadata.themeSequence || null
+            metadata?.animeName || null,
+            metadata?.animeSlug || null,
+            metadata?.themeSequence || null,
+            Date.now()
         ]);
 
         // Get aggregated rating for this theme
-        const aggregatedResult = await pool.query(`
+        const result = await pool.query(`
             SELECT 
-                COUNT(*) as rating_count,
-                AVG(rating) as average_rating
+                theme_id,
+                COUNT(*) as count,
+                AVG(rating) as average,
+                MAX(anime_name) as anime_name,
+                MAX(anime_slug) as anime_slug,
+                MAX(theme_sequence) as theme_sequence,
+                MAX(timestamp) as last_updated
             FROM ratings
             WHERE theme_id = $1
+            GROUP BY theme_id
         `, [themeId]);
 
-        const aggregated = aggregatedResult.rows[0];
-        return {
-            themeId,
-            userId,
-            rating: parseFloat(result.rows[0].rating),
-            timestamp: result.rows[0].timestamp,
-            aggregated: {
-                count: parseInt(aggregated.rating_count),
-                average: parseFloat(aggregated.average_rating)
-            }
-        };
+        if (result.rows.length > 0) {
+            const row = result.rows[0];
+            return {
+                themeId: row.theme_id,
+                count: parseInt(row.count),
+                average: parseFloat(row.average),
+                animeName: row.anime_name,
+                animeSlug: row.anime_slug,
+                themeSequence: row.theme_sequence,
+                lastUpdated: row.last_updated
+            };
+        }
+
+        return null;
     } catch (error) {
         console.error('Error saving rating:', error);
         throw error;
@@ -240,7 +272,6 @@ module.exports = {
     createUser,
     getRatings,
     getUserRatings,
-    saveRating,
-    testConnection
+    saveRating
 };
 
