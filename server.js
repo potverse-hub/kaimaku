@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const session = require('express-session');
+const pgSession = require('connect-pg-simple')(session);
 const db = require('./database');
 
 const app = express();
@@ -26,7 +27,9 @@ app.use(cors({
     credentials: true
 }));
 app.use(express.json());
-app.use(session({
+
+// Configure session store (use PostgreSQL in production, MemoryStore in development)
+const sessionConfig = {
     secret: process.env.SESSION_SECRET || 'kaimaku-secret-key-change-in-production',
     resave: false,
     saveUninitialized: false,
@@ -36,7 +39,21 @@ app.use(session({
         maxAge: 24 * 60 * 60 * 1000, // 24 hours
         sameSite: 'lax'
     }
-}));
+};
+
+// Use PostgreSQL session store in production, MemoryStore in development
+if (process.env.NODE_ENV === 'production' && process.env.DATABASE_URL) {
+    sessionConfig.store = new pgSession({
+        pool: db.pool,
+        tableName: 'user_sessions', // Table name for sessions
+        createTableIfMissing: true // Automatically create table if it doesn't exist
+    });
+    console.log('✅ Using PostgreSQL session store');
+} else {
+    console.log('⚠️  Using MemoryStore (development mode)');
+}
+
+app.use(session(sessionConfig));
 
 // Serve static files (HTML, CSS, JS)
 app.use(express.static(__dirname));
