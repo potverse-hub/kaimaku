@@ -103,12 +103,23 @@ app.get('/api/proxy/test', (req, res) => {
 });
 
 // API Proxy endpoint to avoid CORS issues
-// Handle all routes under /api/proxy/animethemes
-app.all('/api/proxy/animethemes*', async (req, res, next) => {
-    // Only handle GET requests
-    if (req.method !== 'GET') {
-        return res.status(405).json({ error: 'Method not allowed' });
+// Use middleware to catch all routes starting with /api/proxy/animethemes
+app.use((req, res, next) => {
+    // Check if this is a proxy request
+    if (req.path && req.path.startsWith('/api/proxy/animethemes')) {
+        // Only handle GET requests
+        if (req.method !== 'GET') {
+            return res.status(405).json({ error: 'Method not allowed' });
+        }
+        
+        // Handle the proxy request
+        handleProxyRequest(req, res);
+        return; // Don't call next() - we've handled it
     }
+    next();
+});
+
+async function handleProxyRequest(req, res) {
     try {
         // Extract path from originalUrl (full path) or req.url
         // req.originalUrl will be like '/api/proxy/animethemes/animeyear/2025?include=...'
@@ -192,8 +203,8 @@ app.all('/api/proxy/animethemes*', async (req, res, next) => {
         console.error('Proxy error:', error);
         res.status(500).json({ error: 'Failed to proxy request', message: error.message });
     }
-    // Don't call next() - we've handled the request
-});
+    // Request handled
+}
 
 // Serve static files (HTML, CSS, JS)
 app.use(express.static(__dirname));
