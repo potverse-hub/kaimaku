@@ -261,7 +261,15 @@ app.get('/api/ratings', async (req, res) => {
 // Save a rating (requires authentication)
 app.post('/api/ratings', async (req, res) => {
     try {
+        // Log session info for debugging
+        console.log(`[POST /api/ratings] Session check:`, {
+            sessionId: req.sessionID ? req.sessionID.substring(0, 10) + '...' : 'none',
+            userId: req.session.userId || 'none',
+            cookiePresent: req.headers.cookie ? 'yes' : 'no'
+        });
+        
         if (!req.session.userId) {
+            console.warn(`[POST /api/ratings] Authentication failed: No userId in session`);
             return res.status(401).json({ error: 'Authentication required' });
         }
         
@@ -274,7 +282,14 @@ app.post('/api/ratings', async (req, res) => {
         
         const themeRating = await db.saveRating(themeId, userId, rating, metadata);
         
-        res.json({ success: true, themeRating });
+        // Ensure session is saved after rating is saved
+        req.session.save((err) => {
+            if (err) {
+                console.error('Error saving session after rating:', err);
+                // Don't fail the request if session save fails, but log it
+            }
+            res.json({ success: true, themeRating });
+        });
     } catch (error) {
         console.error('Error saving rating:', error);
         res.status(500).json({ error: 'Failed to save rating' });
