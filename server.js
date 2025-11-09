@@ -280,16 +280,22 @@ app.post('/api/ratings', async (req, res) => {
             return res.status(400).json({ error: 'Missing required fields' });
         }
         
+        // Touch the session to keep it alive before database operation
+        req.session.touch();
+        
         const themeRating = await db.saveRating(themeId, userId, rating, metadata);
         
-        // Ensure session is saved after rating is saved
-        req.session.save((err) => {
-            if (err) {
-                console.error('Error saving session after rating:', err);
-                // Don't fail the request if session save fails, but log it
-            }
-            res.json({ success: true, themeRating });
-        });
+        // Verify session is still valid after database operation
+        if (!req.session.userId) {
+            console.error(`[POST /api/ratings] Session lost during database operation!`);
+            return res.status(401).json({ error: 'Session expired during operation' });
+        }
+        
+        // Touch session again to ensure it's saved
+        req.session.touch();
+        
+        // Send response - express-session will auto-save the session
+        res.json({ success: true, themeRating });
     } catch (error) {
         console.error('Error saving rating:', error);
         res.status(500).json({ error: 'Failed to save rating' });
