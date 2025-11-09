@@ -18,17 +18,6 @@ const API_DIRECT = 'https://api.animethemes.moe';
 // Track if we should use direct API as fallback
 let useDirectAPI = false;
 
-// Detect if we're on a mobile device
-const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
-                 (window.matchMedia && window.matchMedia('(max-width: 768px)').matches) ||
-                 ('ontouchstart' in window);
-
-// On mobile, never use direct API (will always fail with CORS)
-if (isMobile) {
-    console.log('[Mobile] Detected mobile device - will only use proxy, never direct API');
-    useDirectAPI = false;
-}
-
 // Local Database Configuration
 // Uses a simple Node.js server that stores data in ratings.json
 // Make sure to run: npm install && npm start
@@ -117,6 +106,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     setupAuthEventListeners();
     setupPageNavigation();
     setupNewFeatures();
+    setupMobileMenu();
     loadFeaturedOpenings();
     loadLeaderboard();
     
@@ -399,78 +389,38 @@ async function fetchWithFallback(url, options = {}) {
     try {
         const response = await fetch(url, options);
         
-        // Check if proxy returned a Cloudflare block error
-        const isCloudflareBlock = response.status === 403 || response.status === 503;
-        
-        // If proxy is blocked by Cloudflare, try direct API (even on mobile - CORS might work)
-        if (isCloudflareBlock && API_BASE !== API_DIRECT && url.includes(API_BASE)) {
-            // Check if it's actually a Cloudflare block by reading the response
-            try {
-                const responseText = await response.clone().text();
-                if (responseText.includes('Just a moment') || responseText.includes('cf-browser-verification')) {
-                    console.warn(`[Proxy] Cloudflare block detected (${response.status}), trying direct API as fallback...`);
-                    const directUrl = url.replace(API_BASE, API_DIRECT);
-                    console.log(`[Fallback] Trying direct API:`, directUrl);
-                    
-                    try {
-                        const directResponse = await fetch(directUrl, options);
-                        if (directResponse.ok) {
-                            console.log(`[Fallback] ✓ Direct API worked!`);
-                            useDirectAPI = true; // Remember to use direct API for future requests
-                            return directResponse;
-                        } else {
-                            console.warn(`[Fallback] Direct API returned ${directResponse.status}`);
-                            // Return the original proxy error if direct API also fails
-                            return response;
-                        }
-                    } catch (directError) {
-                        console.error(`[Fallback] Direct API error:`, directError.message);
-                        // If direct API fails (CORS or other), return original proxy error
-                        return response;
-                    }
-                }
-            } catch (e) {
-                // Couldn't read response, continue with normal handling
-                console.warn(`[Fallback] Could not check response:`, e.message);
-            }
-        }
-        
-        // If proxy returns 403 but not Cloudflare block, try direct API on desktop only
-        if (response.status === 403 && API_BASE !== API_DIRECT && url.includes(API_BASE) && !isMobile) {
+        // If proxy returns 403, try direct API (only in production)
+        if (response.status === 403 && API_BASE !== API_DIRECT && url.includes(API_BASE)) {
             console.warn(`[Proxy] Received 403, trying direct API as fallback...`);
             const directUrl = url.replace(API_BASE, API_DIRECT);
+            console.log(`[Fallback] Trying direct API:`, directUrl);
             
             try {
                 const directResponse = await fetch(directUrl, options);
                 if (directResponse.ok) {
                     console.log(`[Fallback] ✓ Direct API worked!`);
-                    useDirectAPI = true;
+                    useDirectAPI = true; // Remember to use direct API for future requests
                     return directResponse;
+                } else if (directResponse.status === 0 || directResponse.status >= 500) {
+                    // CORS error or server error - proxy might be needed but is blocked
+                    console.error(`[Fallback] Direct API failed with status ${directResponse.status} (likely CORS)`);
                 }
             } catch (directError) {
                 console.error(`[Fallback] Direct API error:`, directError.message);
+                // If direct API fails due to CORS, we're stuck - return original 403
             }
         }
         
         return response;
     } catch (error) {
-        // If proxy fails completely, try direct API (even on mobile)
+        // If proxy fails and we're in production, try direct API
         if (API_BASE !== API_DIRECT && url.includes(API_BASE) && error.message.includes('Failed to fetch')) {
-            console.warn(`[Proxy] Request failed (${error.message}), trying direct API as fallback...`);
+            console.warn(`[Proxy] Request failed, trying direct API as fallback...`);
             const directUrl = url.replace(API_BASE, API_DIRECT);
             try {
-                const directResponse = await fetch(directUrl, options);
-                if (directResponse.ok) {
-                    console.log(`[Fallback] ✓ Direct API worked after proxy failure!`);
-                    useDirectAPI = true;
-                    return directResponse;
-                }
+                return await fetch(directUrl, options);
             } catch (directError) {
                 console.error(`[Fallback] Direct API also failed:`, directError.message);
-                // If it's a CORS error, provide a helpful message
-                if (directError.message.includes('CORS') || directError.message.includes('Failed to fetch')) {
-                    throw new Error('Cannot connect to API. The proxy is blocked by Cloudflare and direct API access is blocked by CORS. Please contact the API maintainers.');
-                }
             }
         }
         throw error;
@@ -1225,12 +1175,18 @@ async function playTheme({ anime, theme }) {
         videoPlayer.progressHandler = progressHandler;
         videoPlayer.canPlayThroughHandler = canPlayThroughHandler;
         
-        // Set video source with aggressive preloading
-        videoPlayer.src = videoUrl;
-        videoPlayer.preload = 'auto'; // Preload entire video
-        // Disable seeking while buffering to prevent interruptions
-        videoPlayer.currentTime = 0;
-        videoPlayer.load();
+    // Set video source with aggressive preloading
+    videoPlayer.src = videoUrl;
+    videoPlayer.preload = 'auto'; // Preload entire video
+    // Mobile optimizations
+    videoPlayer.setAttribute('playsinline', 'true');
+    videoPlayer.setAttribute('webkit-playsinline', 'true');
+    videoPlayer.setAttribute('x5-playsinline', 'true'); // For Android X5 browser
+    videoPlayer.setAttribute('x5-video-player-type', 'h5'); // For Android X5 browser
+    videoPlayer.setAttribute('x5-video-player-fullscreen', 'true'); // For Android X5 browser
+    // Disable seeking while buffering to prevent interruptions
+    videoPlayer.currentTime = 0;
+    videoPlayer.load();
         
         // Start checking buffer immediately
         isWaitingForBuffer = true;
@@ -1589,42 +1545,132 @@ function setupCustomControls() {
     document.addEventListener('mouseup', handleMouseUp);
     
     // Fullscreen
+    // Enhanced fullscreen for mobile
     fullscreenBtn.addEventListener('click', (e) => {
         e.stopPropagation();
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || 
+                        (window.matchMedia && window.matchMedia('(max-width: 768px)').matches);
+        
         if (!document.fullscreenElement && !document.webkitFullscreenElement && !document.mozFullScreenElement) {
-            if (videoWrapper.requestFullscreen) {
-                videoWrapper.requestFullscreen();
+            // Enter fullscreen
+            if (isMobile && videoPlayer.webkitEnterFullscreen) {
+                // iOS native fullscreen
+                videoPlayer.webkitEnterFullscreen();
+            } else if (videoWrapper.requestFullscreen) {
+                videoWrapper.requestFullscreen().catch(err => {
+                    console.log('Fullscreen error:', err);
+                    // Fallback: try video element fullscreen
+                    if (videoPlayer.requestFullscreen) {
+                        videoPlayer.requestFullscreen().catch(() => {});
+                    }
+                });
             } else if (videoWrapper.webkitRequestFullscreen) {
                 videoWrapper.webkitRequestFullscreen();
             } else if (videoWrapper.mozRequestFullScreen) {
                 videoWrapper.mozRequestFullScreen();
+            } else if (videoPlayer.requestFullscreen) {
+                videoPlayer.requestFullscreen().catch(() => {});
             }
         } else {
+            // Exit fullscreen
             if (document.exitFullscreen) {
                 document.exitFullscreen();
             } else if (document.webkitExitFullscreen) {
                 document.webkitExitFullscreen();
             } else if (document.mozCancelFullScreen) {
                 document.mozCancelFullScreen();
+            } else if (videoPlayer.webkitExitFullscreen) {
+                videoPlayer.webkitExitFullscreen();
             }
         }
     });
     
-    // Show controls on mouse move
-    const showControls = () => {
-        videoWrapper.classList.add('controls-visible');
-        if (controlsTimeout) {
-            clearTimeout(controlsTimeout);
-        }
-        if (!videoPlayer.paused) {
-            controlsTimeout = setTimeout(() => {
+    // Handle fullscreen changes
+    const handleFullscreenChange = () => {
+        const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement);
+        if (isFullscreen) {
+            videoWrapper.classList.add('fullscreen-active');
+            // On mobile, hide controls initially in fullscreen
+            if (window.innerWidth <= 768) {
                 videoWrapper.classList.remove('controls-visible');
-            }, 3000);
+            }
+        } else {
+            videoWrapper.classList.remove('fullscreen-active');
         }
     };
     
-    videoWrapper.addEventListener('mousemove', showControls);
-    videoWrapper.addEventListener('mouseenter', showControls);
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+    
+    // Mobile touch controls - show/hide controls on tap
+    let mobileControlsTimeout;
+    let lastTapTime = 0;
+    const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || 
+                          (window.matchMedia && window.matchMedia('(max-width: 768px)').matches);
+    
+    if (isMobileDevice) {
+        videoWrapper.addEventListener('touchstart', (e) => {
+            // Double tap to play/pause (only if not on control buttons)
+            if (!e.target.closest('.custom-controls') && !e.target.closest('.control-btn')) {
+                const currentTime = Date.now();
+                if (currentTime - lastTapTime < 300) {
+                    e.preventDefault();
+                    if (videoPlayer.paused) {
+                        videoPlayer.play().catch(() => {});
+                    } else {
+                        videoPlayer.pause();
+                    }
+                    lastTapTime = 0;
+                } else {
+                    lastTapTime = currentTime;
+                }
+            }
+            
+            // Show controls on tap
+            videoWrapper.classList.add('controls-visible');
+            clearTimeout(mobileControlsTimeout);
+            
+            // Hide controls after 3 seconds of inactivity
+            mobileControlsTimeout = setTimeout(() => {
+                if (!videoPlayer.paused) {
+                    videoWrapper.classList.remove('controls-visible');
+                }
+            }, 3000);
+        }, { passive: true });
+        
+        // Keep controls visible when paused
+        videoPlayer.addEventListener('pause', () => {
+            videoWrapper.classList.add('controls-visible');
+            clearTimeout(mobileControlsTimeout);
+        });
+        
+        videoPlayer.addEventListener('play', () => {
+            // Hide controls after a delay when playing
+            mobileControlsTimeout = setTimeout(() => {
+                videoWrapper.classList.remove('controls-visible');
+            }, 3000);
+        });
+    }
+    
+    // Show controls on mouse move (desktop only)
+    let controlsTimeout;
+    if (!isMobileDevice) {
+        const showControls = () => {
+            videoWrapper.classList.add('controls-visible');
+            if (controlsTimeout) {
+                clearTimeout(controlsTimeout);
+            }
+            if (!videoPlayer.paused) {
+                controlsTimeout = setTimeout(() => {
+                    videoWrapper.classList.remove('controls-visible');
+                }, 3000);
+            }
+        };
+        
+        videoWrapper.addEventListener('mousemove', showControls);
+        videoWrapper.addEventListener('mouseenter', showControls);
+    }
     
     // Click video to play/pause (but not when clicking controls)
     videoWrapper.addEventListener('click', (e) => {
@@ -3143,6 +3189,99 @@ function setupNewFeatures() {
     setupKeyboardShortcuts();
     setupThemeToggle();
     setupViewToggle();
+}
+
+// Mobile Menu Setup
+function setupMobileMenu() {
+    const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+    const navbarAuth = document.querySelector('.navbar-auth');
+    const menuIcon = document.getElementById('menuIcon');
+    const closeIcon = document.getElementById('closeIcon');
+    const filterDropdown = document.getElementById('filterDropdown');
+    
+    if (!mobileMenuToggle || !navbarAuth) return;
+    
+    let isMenuOpen = false;
+    
+    // Toggle mobile menu
+    mobileMenuToggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        isMenuOpen = !isMenuOpen;
+        
+        if (isMenuOpen) {
+            navbarAuth.classList.add('mobile-menu-open');
+            if (menuIcon) menuIcon.style.display = 'none';
+            if (closeIcon) closeIcon.style.display = 'block';
+        } else {
+            navbarAuth.classList.remove('mobile-menu-open');
+            if (menuIcon) menuIcon.style.display = 'block';
+            if (closeIcon) closeIcon.style.display = 'none';
+        }
+    });
+    
+    // Close menu when clicking outside
+    document.addEventListener('click', (e) => {
+        if (isMenuOpen && !navbarAuth.contains(e.target) && !mobileMenuToggle.contains(e.target)) {
+            isMenuOpen = false;
+            navbarAuth.classList.remove('mobile-menu-open');
+            if (menuIcon) menuIcon.style.display = 'block';
+            if (closeIcon) closeIcon.style.display = 'none';
+        }
+    });
+    
+    // Close menu when clicking on auth buttons
+    const authButtons = navbarAuth.querySelectorAll('.nav-auth-btn');
+    authButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (isMenuOpen) {
+                isMenuOpen = false;
+                navbarAuth.classList.remove('mobile-menu-open');
+                if (menuIcon) menuIcon.style.display = 'block';
+                if (closeIcon) closeIcon.style.display = 'none';
+            }
+        });
+    });
+    
+    // Close filter dropdown when opening mobile menu
+    mobileMenuToggle.addEventListener('click', () => {
+        if (filterDropdown && !filterDropdown.classList.contains('hidden')) {
+            filterDropdown.classList.add('hidden');
+        }
+    });
+    
+    // Prevent body scroll when filter dropdown is open on mobile
+    const filterBtn = document.getElementById('filterBtn');
+    if (filterBtn && filterDropdown) {
+        filterBtn.addEventListener('click', () => {
+            if (window.innerWidth <= 768) {
+                if (!filterDropdown.classList.contains('hidden')) {
+                    document.body.style.overflow = 'hidden';
+                } else {
+                    document.body.style.overflow = '';
+                }
+            }
+        });
+        
+        // Also close filter when clicking apply/clear
+        const applyFilters = document.getElementById('applyFilters');
+        const clearFilters = document.getElementById('clearFilters');
+        if (applyFilters) {
+            applyFilters.addEventListener('click', () => {
+                if (window.innerWidth <= 768) {
+                    filterDropdown.classList.add('hidden');
+                    document.body.style.overflow = '';
+                }
+            });
+        }
+        if (clearFilters) {
+            clearFilters.addEventListener('click', () => {
+                if (window.innerWidth <= 768) {
+                    filterDropdown.classList.add('hidden');
+                    document.body.style.overflow = '';
+                }
+            });
+        }
+    }
 }
 
 // Load saved preferences
