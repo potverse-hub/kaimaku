@@ -97,6 +97,61 @@ app.use((req, res, next) => {
     next();
 });
 
+// Test endpoint to check API connectivity
+app.get('/api/test-animethemes', async (req, res) => {
+    try {
+        const https = require('https');
+        const zlib = require('zlib');
+        
+        const testUrl = 'https://api.animethemes.moe/anime?page[size]=1';
+        const parsedUrl = new URL(testUrl);
+        
+        const options = {
+            hostname: parsedUrl.hostname,
+            path: parsedUrl.pathname + parsedUrl.search,
+            method: 'GET',
+            headers: {
+                'Accept': 'application/json',
+                'User-Agent': 'Mozilla/5.0 (compatible; Kaimaku/1.0)'
+            },
+            timeout: 10000
+        };
+        
+        const response = await new Promise((resolve, reject) => {
+            const req = https.request(options, (res) => {
+                let stream = res;
+                const encoding = res.headers['content-encoding'];
+                
+                if (encoding === 'gzip') {
+                    stream = res.pipe(zlib.createGunzip());
+                } else if (encoding === 'deflate') {
+                    stream = res.pipe(zlib.createInflate());
+                }
+                
+                let data = '';
+                stream.on('data', (chunk) => data += chunk.toString());
+                stream.on('end', () => resolve({ status: res.statusCode, data, headers: res.headers }));
+                stream.on('error', reject);
+            });
+            
+            req.on('error', reject);
+            req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
+            req.setTimeout(options.timeout);
+            req.end();
+        });
+        
+        res.json({
+            success: response.status === 200,
+            status: response.status,
+            headers: response.headers,
+            dataLength: response.data ? response.data.length : 0,
+            sampleData: response.data ? response.data.substring(0, 200) : null
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message, stack: error.stack });
+    }
+});
+
 // API Proxy endpoint to avoid CORS issues
 app.get('/api/proxy/animethemes/*', async (req, res) => {
     try {
@@ -105,7 +160,7 @@ app.get('/api/proxy/animethemes/*', async (req, res) => {
         const queryString = req.url.split('?')[1] || '';
         const fullUrl = `https://api.animethemes.moe${apiPath}${queryString ? '?' + queryString : ''}`;
         
-        console.log(`Proxying request to: ${fullUrl}`);
+        console.log(`[Proxy] Requesting: ${fullUrl}`);
         
         // Use Node.js built-in http/https modules
         const https = require('https');
@@ -113,44 +168,122 @@ app.get('/api/proxy/animethemes/*', async (req, res) => {
         const url = require('url');
         
         const parsedUrl = new URL(fullUrl);
+        
+        // Use minimal headers - API docs say headers are not required
         const options = {
             hostname: parsedUrl.hostname,
             path: parsedUrl.pathname + parsedUrl.search,
             method: 'GET',
             headers: {
                 'Accept': 'application/json',
-                'User-Agent': 'Kaimaku/1.0'
-            }
+                'User-Agent': 'Mozilla/5.0 (compatible; Kaimaku/1.0; +https://github.com/potverse-hub/kaimaku)'
+            },
+            timeout: 30000 // 30 second timeout
         };
         
         const requestModule = parsedUrl.protocol === 'https:' ? https : http;
+        const zlib = require('zlib');
         
         const proxyResponse = await new Promise((resolve, reject) => {
             const req = requestModule.request(options, (res) => {
+                // Collect response headers for debugging
+                const responseHeaders = res.headers;
+                const statusCode = res.statusCode;
+                
+                // Handle different content encodings
+                let stream = res;
+                const encoding = res.headers['content-encoding'];
+                
+                if (encoding === 'gzip') {
+                    stream = res.pipe(zlib.createGunzip());
+                } else if (encoding === 'deflate') {
+                    stream = res.pipe(zlib.createInflate());
+                } else if (encoding === 'br') {
+                    stream = res.pipe(zlib.createBrotliDecompress());
+                }
+                
                 let data = '';
-                res.on('data', (chunk) => {
-                    data += chunk;
+                
+                stream.on('data', (chunk) => {
+                    data += chunk.toString();
                 });
-                res.on('end', () => {
-                    resolve({ status: res.statusCode, data: data });
+                
+                stream.on('end', () => {
+                    resolve({ 
+                        status: statusCode, 
+                        data: data,
+                        headers: responseHeaders
+                    });
+                });
+                
+                stream.on('error', (error) => {
+                    console.error('[Proxy] Stream error:', error);
+                    reject(error);
                 });
             });
             
             req.on('error', (error) => {
+                console.error('[Proxy] Request error:', error);
                 reject(error);
             });
             
+            req.on('timeout', () => {
+                req.destroy();
+                reject(new Error('Request timeout'));
+            });
+            
+            req.setTimeout(options.timeout);
             req.end();
         });
         
-        if (proxyResponse.status !== 200) {
-            return res.status(proxyResponse.status).json({ error: `API returned ${proxyResponse.status}` });
+        // Log response for debugging
+        console.log(`[Proxy] Response status: ${proxyResponse.status} for ${apiPath}`);
+        
+        // Forward response headers (especially CORS headers)
+        if (proxyResponse.headers['access-control-allow-origin']) {
+            res.setHeader('Access-Control-Allow-Origin', proxyResponse.headers['access-control-allow-origin']);
+        }
+        if (proxyResponse.headers['access-control-allow-methods']) {
+            res.setHeader('Access-Control-Allow-Methods', proxyResponse.headers['access-control-allow-methods']);
+        }
+        if (proxyResponse.headers['access-control-allow-headers']) {
+            res.setHeader('Access-Control-Allow-Headers', proxyResponse.headers['access-control-allow-headers']);
         }
         
-        const data = JSON.parse(proxyResponse.data);
-        res.json(data);
+        // Set CORS headers for our domain
+        res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
+        res.setHeader('Access-Control-Allow-Credentials', 'true');
+        
+        // Handle non-200 status codes
+        if (proxyResponse.status !== 200) {
+            console.error(`[Proxy] API returned ${proxyResponse.status} for ${fullUrl}`);
+            console.error(`[Proxy] Response data:`, proxyResponse.data.substring(0, 500));
+            
+            // Try to parse error response
+            let errorData = { error: `API returned ${proxyResponse.status}` };
+            try {
+                if (proxyResponse.data) {
+                    errorData = JSON.parse(proxyResponse.data);
+                }
+            } catch (e) {
+                // Not JSON, use text
+                errorData.message = proxyResponse.data.substring(0, 200);
+            }
+            
+            return res.status(proxyResponse.status).json(errorData);
+        }
+        
+        // Parse and return successful response
+        try {
+            const data = JSON.parse(proxyResponse.data);
+            res.json(data);
+        } catch (parseError) {
+            console.error('[Proxy] JSON parse error:', parseError);
+            console.error('[Proxy] Response data:', proxyResponse.data.substring(0, 500));
+            res.status(500).json({ error: 'Invalid JSON response from API', message: parseError.message });
+        }
     } catch (error) {
-        console.error('Proxy error:', error);
+        console.error('[Proxy] Proxy error:', error);
         res.status(500).json({ error: 'Failed to proxy request', message: error.message });
     }
 });
