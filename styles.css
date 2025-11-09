@@ -2010,8 +2010,18 @@ body.light-theme .navbar {
     }
     
     .featured-carousel-wrapper {
-        padding: 2rem 1.5rem;
+        padding: 2rem 1rem;
         min-height: 350px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    
+    .featured-carousel {
+        justify-content: center;
+        align-items: center;
+        width: 100%;
+        max-width: 100%;
     }
     
     .featured-card {
@@ -2026,16 +2036,39 @@ body.light-theme .navbar {
     }
     
     .featured-card-prev {
-        transform: scale(0.7) translateX(-80px) translateZ(-100px);
+        transform: scale(0.7) translateX(-60px) translateZ(-100px);
     }
     
     .featured-card-next {
-        transform: scale(0.7) translateX(80px) translateZ(-100px);
+        transform: scale(0.7) translateX(60px) translateZ(-100px);
     }
     
     .carousel-nav-btn {
-        width: 40px;
-        height: 40px;
+        width: 36px;
+        height: 36px;
+    }
+    
+    .carousel-nav-btn.carousel-prev {
+        left: 0.5rem;
+    }
+    
+    .carousel-nav-btn.carousel-next {
+        right: 0.5rem;
+    }
+    
+    .carousel-dots {
+        gap: 0.5rem;
+        margin-top: 1rem;
+    }
+    
+    .carousel-dot {
+        width: 8px;
+        height: 8px;
+    }
+    
+    .carousel-dot.active {
+        width: 24px;
+        height: 8px;
     }
 
     .title-main {
