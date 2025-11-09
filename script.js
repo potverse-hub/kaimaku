@@ -2705,6 +2705,11 @@ async function checkAuthentication() {
             const data = await response.json();
             currentUser = data.username;
             updateAuthUI();
+            
+            // Load user's ratings after authentication
+            if (databaseInitialized) {
+                loadUserRatings();
+            }
         } else {
             currentUser = null;
             updateAuthUI();
