@@ -1,0 +1,25 @@
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Dependencies
+node_modules/
+
+# Dev/Build Artifacts
+dist/
+
+# Local Env Files
+.env
+
+# Log files
+*.log
+
+# Editors
+.vscode
+.idea
+
+# VuePress temp directory
+.temp
+
+# Cache
+docs/.vitepress/cache/
