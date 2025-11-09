@@ -55,7 +55,7 @@ const sessionConfig = {
         secure: process.env.NODE_ENV === 'production', // HTTPS in production (Render uses HTTPS)
         httpOnly: true,
         maxAge: 24 * 60 * 60 * 1000, // 24 hours
-        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax', // 'none' for cross-site in production (if needed)
+        sameSite: 'lax', // 'lax' works for same-site requests (frontend and backend on same domain)
         path: '/' // Ensure cookie is available for all paths
         // Don't set domain - let browser handle it automatically
     }
