@@ -9,6 +9,9 @@ const db = require('./database');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Trust proxy (required for Render and other hosting services)
+app.set('trust proxy', 1);
+
 // Middleware
 const allowedOrigins = process.env.ALLOWED_ORIGINS 
     ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
@@ -49,10 +52,10 @@ const sessionConfig = {
     rolling: true, // Reset expiration on every request to keep session alive
     name: 'kaimaku.sid', // Custom session name
     cookie: { 
-        secure: process.env.NODE_ENV === 'production', // HTTPS in production
+        secure: process.env.NODE_ENV === 'production', // HTTPS in production (Render uses HTTPS)
         httpOnly: true,
         maxAge: 24 * 60 * 60 * 1000, // 24 hours
-        sameSite: 'lax', // 'lax' works for same-site requests
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax', // 'none' for cross-site in production (if needed)
         path: '/' // Ensure cookie is available for all paths
         // Don't set domain - let browser handle it automatically
     }
