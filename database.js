@@ -182,6 +182,31 @@ async function getRatings() {
     }
 }
 
+async function getUserRatings(userId) {
+    try {
+        const result = await pool.query(
+            'SELECT theme_id, rating, timestamp, anime_name, anime_slug, theme_sequence FROM ratings WHERE user_id = $1',
+            [userId]
+        );
+        
+        const ratings = {};
+        result.rows.forEach(row => {
+            ratings[row.theme_id] = {
+                rating: parseFloat(row.rating),
+                timestamp: row.timestamp,
+                animeName: row.anime_name,
+                animeSlug: row.anime_slug,
+                themeSequence: row.theme_sequence
+            };
+        });
+        
+        return ratings;
+    } catch (error) {
+        console.error('Error getting user ratings:', error);
+        throw error;
+    }
+}
+
 async function saveRating(themeId, userId, rating, metadata) {
     try {
         // Insert or update rating
@@ -246,6 +271,7 @@ module.exports = {
     getUser,
     createUser,
     getRatings,
+    getUserRatings,
     saveRating
 };
 

@@ -248,7 +248,7 @@ app.get('/api/me', (req, res) => {
     }
 });
 
-// Get all ratings
+// Get all ratings (public aggregated ratings)
 app.get('/api/ratings', async (req, res) => {
     try {
         const data = await db.getRatings();
@@ -256,6 +256,22 @@ app.get('/api/ratings', async (req, res) => {
     } catch (error) {
         console.error('Error reading ratings:', error);
         res.status(500).json({ error: 'Failed to read ratings' });
+    }
+});
+
+// Get current user's personal ratings (requires authentication)
+app.get('/api/my-ratings', async (req, res) => {
+    try {
+        if (!req.session.userId) {
+            return res.status(401).json({ error: 'Authentication required' });
+        }
+        
+        const userId = req.session.userId;
+        const userRatings = await db.getUserRatings(userId);
+        res.json({ ratings: userRatings });
+    } catch (error) {
+        console.error('Error reading user ratings:', error);
+        res.status(500).json({ error: 'Failed to read user ratings' });
     }
 });
 

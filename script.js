@@ -94,6 +94,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadFeaturedOpenings();
     loadLeaderboard();
     
+    // Load user's personal ratings from database if authenticated
+    if (databaseInitialized && currentUser) {
+        loadUserRatings();
+    }
+    
     // Load public ratings from database
     if (databaseInitialized) {
         loadPublicRatings();
@@ -102,6 +107,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         setTimeout(() => {
             if (databaseInitialized) {
                 loadPublicRatings();
+                if (currentUser) {
+                    loadUserRatings();
+                }
             }
         }, 2000);
     }
@@ -1634,6 +1642,64 @@ async function saveRatingToDatabase(themeId, rating, metadata) {
     }
 }
 
+// Load current user's personal ratings from database
+async function loadUserRatings() {
+    if (!databaseInitialized || !currentUser) {
+        return;
+    }
+    
+    try {
+        console.log('🔄 Loading user ratings from database...');
+        const response = await fetch(`${API_BASE_URL}/my-ratings`, {
+            method: 'GET',
+            credentials: 'include',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        if (!response.ok) {
+            if (response.status === 401) {
+                console.warn('⚠️ Not authenticated, cannot load user ratings');
+                return;
+            }
+            throw new Error(`Failed to fetch user ratings: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        const userRatings = data.ratings || {};
+        
+        // Merge user ratings into local ratings object
+        Object.keys(userRatings).forEach(themeId => {
+            ratings[themeId] = userRatings[themeId].rating;
+            
+            // Also update metadata if available
+            if (userRatings[themeId].animeName) {
+                if (!themeMetadata[themeId]) {
+                    themeMetadata[themeId] = {};
+                }
+                themeMetadata[themeId].animeName = userRatings[themeId].animeName;
+                themeMetadata[themeId].animeSlug = userRatings[themeId].animeSlug;
+                themeMetadata[themeId].themeSequence = userRatings[themeId].themeSequence;
+            }
+        });
+        
+        // Save merged ratings to localStorage as backup
+        localStorage.setItem('kaimaku', JSON.stringify(ratings));
+        localStorage.setItem('themeMetadata', JSON.stringify(themeMetadata));
+        
+        console.log(`✅ Loaded ${Object.keys(userRatings).length} user ratings from database`);
+        
+        // Update UI to reflect loaded ratings
+        if (currentTheme) {
+            loadCurrentRating();
+        }
+        loadLeaderboard();
+    } catch (error) {
+        console.error('❌ Error loading user ratings:', error);
+    }
+}
+
 // Load public ratings from database
 async function loadPublicRatings() {
     if (!databaseInitialized) {
@@ -1984,10 +2050,17 @@ async function loadFeaturedOpenings() {
         } else {
             // Fallback to filter-based endpoint
             url = `${API_BASE}/anime/?filter[year]=${year}&filter[season]=${season}&include=animethemes.animethemeentries.videos,animethemes.song,animethemes.song.artists,animesynonyms,images&page[size]=50&sort=name`;
+            
+            const controller2 = new AbortController();
+            const timeoutId2 = setTimeout(() => controller2.abort(), 15000);
+            
             response = await fetch(url, {
                 method: 'GET',
                 headers: { 'Accept': 'application/json' },
+                signal: controller2.signal
             });
+            
+            clearTimeout(timeoutId2);
             
             if (response.ok) {
                 const data = await response.json();
@@ -2064,7 +2137,18 @@ async function loadFeaturedOpenings() {
         createFeaturedCarousel(featuredItems, featuredList);
     } catch (error) {
         console.error('Error loading featured openings:', error);
-        featuredList.innerHTML = '<p style="color: var(--text-muted); text-align: center; padding: 2rem;">Unable to load featured openings. Please try again later.</p>';
+        
+        // More specific error messages
+        let errorMessage = 'Unable to load featured openings. ';
+        if (error.name === 'AbortError') {
+            errorMessage += 'Request timed out. Please check your connection and try again.';
+        } else if (error.message && error.message.includes('Failed to fetch')) {
+            errorMessage += 'Network error. Please check your connection.';
+        } else {
+            errorMessage += 'Please try again later.';
+        }
+        
+        featuredList.innerHTML = `<p style="color: var(--text-muted); text-align: center; padding: 2rem;">${errorMessage}</p>`;
     }
 }
 
