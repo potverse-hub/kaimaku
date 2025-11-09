@@ -1994,22 +1994,6 @@ body.light-theme .navbar {
         margin-left: auto;
     }
     
-    @media (max-width: 480px) {
-        .navbar-content {
-            flex-direction: column;
-        gap: 1rem;
-    }
-    
-    .navbar-search {
-        max-width: 100%;
-        width: 100%;
-    }
-    
-    .nav-home-btn {
-        width: 100%;
-        justify-content: center;
-    }
-    
     .container {
         padding: 1rem;
         padding-top: 6rem;

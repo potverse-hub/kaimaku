@@ -2166,6 +2166,14 @@ async function loadFeaturedOpenings() {
         }
         
         featuredList.innerHTML = `<p style="color: var(--text-muted); text-align: center; padding: 2rem;">${errorMessage}</p>`;
+        
+        // Retry after a delay on mobile
+        if (window.innerWidth <= 768) {
+            setTimeout(() => {
+                console.log('Retrying featured openings load...');
+                loadFeaturedOpenings();
+            }, 5000);
+        }
     }
 }
 
