@@ -12,6 +12,12 @@ const API_BASE = (() => {
     return 'https://api.animethemes.moe';
 })();
 
+// Direct API URL for fallback (if proxy fails)
+const API_DIRECT = 'https://api.animethemes.moe';
+
+// Track if we should use direct API as fallback
+let useDirectAPI = false;
+
 // Local Database Configuration
 // Uses a simple Node.js server that stores data in ratings.json
 // Make sure to run: npm install && npm start
@@ -377,6 +383,49 @@ function processResponse(data, url) {
     return [];
 }
 
+// Helper function to fetch with proxy fallback to direct API
+async function fetchWithFallback(url, options = {}) {
+    try {
+        const response = await fetch(url, options);
+        
+        // If proxy returns 403, try direct API (only in production)
+        if (response.status === 403 && API_BASE !== API_DIRECT && url.includes(API_BASE)) {
+            console.warn(`[Proxy] Received 403, trying direct API as fallback...`);
+            const directUrl = url.replace(API_BASE, API_DIRECT);
+            console.log(`[Fallback] Trying direct API:`, directUrl);
+            
+            try {
+                const directResponse = await fetch(directUrl, options);
+                if (directResponse.ok) {
+                    console.log(`[Fallback] ✓ Direct API worked!`);
+                    useDirectAPI = true; // Remember to use direct API for future requests
+                    return directResponse;
+                } else if (directResponse.status === 0 || directResponse.status >= 500) {
+                    // CORS error or server error - proxy might be needed but is blocked
+                    console.error(`[Fallback] Direct API failed with status ${directResponse.status} (likely CORS)`);
+                }
+            } catch (directError) {
+                console.error(`[Fallback] Direct API error:`, directError.message);
+                // If direct API fails due to CORS, we're stuck - return original 403
+            }
+        }
+        
+        return response;
+    } catch (error) {
+        // If proxy fails and we're in production, try direct API
+        if (API_BASE !== API_DIRECT && url.includes(API_BASE) && error.message.includes('Failed to fetch')) {
+            console.warn(`[Proxy] Request failed, trying direct API as fallback...`);
+            const directUrl = url.replace(API_BASE, API_DIRECT);
+            try {
+                return await fetch(directUrl, options);
+            } catch (directError) {
+                console.error(`[Fallback] Direct API also failed:`, directError.message);
+            }
+        }
+        throw error;
+    }
+}
+
 async function searchAnime(query) {
     // Based on API documentation: 
     // 1. Use /search/ endpoint for global search (returns { search: { anime: [...], ... } })
@@ -384,25 +433,28 @@ async function searchAnime(query) {
     // 3. Page size limit appears to be around 100 (422 error for 1000)
     const encodedQuery = encodeURIComponent(query);
     
+    // Use direct API if we've determined proxy is blocked
+    const baseUrl = useDirectAPI ? API_DIRECT : API_BASE;
+    
     // Primary: Use global search endpoint
     // Include animesynonyms to search English names
     const searchEndpoints = [
         // Global search endpoint (recommended for searching)
         // Note: include[type] format for search endpoint, include animesynonyms
-        `${API_BASE}/search/?q=${encodedQuery}&include[anime]=animethemes.animethemeentries.videos,animethemes.song,animethemes.song.artists,animesynonyms&page[limit]=50`,
+        `${baseUrl}/search/?q=${encodedQuery}&include[anime]=animethemes.animethemeentries.videos,animethemes.song,animethemes.song.artists,animesynonyms&page[limit]=50`,
         // Try without videos include for faster search
-        `${API_BASE}/search/?q=${encodedQuery}&include[anime]=animethemes.song,animethemes.song.artists,animesynonyms&page[limit]=50`,
+        `${baseUrl}/search/?q=${encodedQuery}&include[anime]=animethemes.song,animethemes.song.artists,animesynonyms&page[limit]=50`,
         // Anime-specific search with q parameter, include synonyms
-        `${API_BASE}/anime/?q=${encodedQuery}&include=animethemes.animethemeentries.videos,animethemes.song,animethemes.song.artists,animesynonyms&page[size]=100`,
+        `${baseUrl}/anime/?q=${encodedQuery}&include=animethemes.animethemeentries.videos,animethemes.song,animethemes.song.artists,animesynonyms&page[size]=100`,
         // Filter by name (exact match)
-        `${API_BASE}/anime/?filter[name]=${encodedQuery}&include=animethemes.animethemeentries.videos,animethemes.song,animethemes.song.artists,animesynonyms&page[size]=100`,
+        `${baseUrl}/anime/?filter[name]=${encodedQuery}&include=animethemes.animethemeentries.videos,animethemes.song,animethemes.song.artists,animesynonyms&page[size]=100`,
     ];
     
     // First, try search endpoints
     for (const url of searchEndpoints) {
         try {
             console.log('Trying search endpoint:', url);
-            const response = await fetch(url, {
+            const response = await fetchWithFallback(url, {
                 method: 'GET',
                 headers: { 'Accept': 'application/json' },
             });
@@ -410,6 +462,10 @@ async function searchAnime(query) {
             if (!response.ok) {
                 if (response.status === 422) {
                     console.warn(`422 error - parameter validation failed for:`, url);
+                } else if (response.status === 403) {
+                    console.warn(`403 error - access forbidden for:`, url);
+                    // If we get 403 and haven't tried direct API yet, continue to next endpoint
+                    // The fetchWithFallback should have already tried direct API
                 }
                 continue;
             }
@@ -472,10 +528,10 @@ async function searchAnime(query) {
     
     for (let page = 1; page <= 5; page++) { // Try up to 5 pages (500 anime)
         try {
-            const url = `${API_BASE}/anime/?include=animethemes.animethemeentries.videos,animethemes.song,animethemes.song.artists,animesynonyms&page[number]=${page}&page[size]=${pageSize}`;
+            const url = `${baseUrl}/anime/?include=animethemes.animethemeentries.videos,animethemes.song,animethemes.song.artists,animesynonyms&page[number]=${page}&page[size]=${pageSize}`;
             console.log(`Fetching page ${page}...`);
             
-            const response = await fetch(url, {
+            const response = await fetchWithFallback(url, {
                 method: 'GET',
                 headers: { 'Accept': 'application/json' },
             });
@@ -537,13 +593,13 @@ async function searchAnime(query) {
     console.log('All search endpoints failed. Testing basic API connectivity...');
     
     const testUrls = [
-        `${API_BASE}/anime/?page[size]=5`,
+        `${baseUrl}/anime/?page[size]=5`,
     ];
     
     for (const testUrl of testUrls) {
         try {
             console.log('Testing basic connectivity:', testUrl);
-            const testResponse = await fetch(testUrl, {
+            const testResponse = await fetchWithFallback(testUrl, {
                 method: 'GET',
                 headers: {
                     'Accept': 'application/json',
@@ -564,7 +620,7 @@ async function searchAnime(query) {
                     const largePageUrl = testUrl.replace('page[size]=5', 'page[size]=500');
                     
                     try {
-                        const largeResponse = await fetch(largePageUrl, {
+                        const largeResponse = await fetchWithFallback(largePageUrl, {
                             method: 'GET',
                             headers: {
                                 'Accept': 'application/json',
@@ -653,9 +709,10 @@ async function fetchAnimeWithIncludes(animeIds) {
     try {
         // Fetch anime by IDs using filter[id] - include synonyms for English name search
         const idsParam = animeIds.join(',');
-        const url = `${API_BASE}/anime/?filter[id]=${idsParam}&include=animethemes.animethemeentries.videos,animethemes.song,animethemes.song.artists,animesynonyms&page[size]=${animeIds.length}`;
+        const baseUrl = useDirectAPI ? API_DIRECT : API_BASE;
+        const url = `${baseUrl}/anime/?filter[id]=${idsParam}&include=animethemes.animethemeentries.videos,animethemes.song,animethemes.song.artists,animesynonyms&page[size]=${animeIds.length}`;
         
-        const response = await fetch(url, {
+        const response = await fetchWithFallback(url, {
             method: 'GET',
             headers: { 'Accept': 'application/json' },
         });
@@ -683,9 +740,10 @@ async function enhanceAnimeWithSynonyms(animeList) {
         // Fetch synonyms for anime that don't have them
         const animeIds = needsSynonyms.map(a => a.id);
         const idsParam = animeIds.join(',');
-        const url = `${API_BASE}/anime/?filter[id]=${idsParam}&include=animesynonyms&page[size]=${animeIds.length}`;
+        const baseUrl = useDirectAPI ? API_DIRECT : API_BASE;
+        const url = `${baseUrl}/anime/?filter[id]=${idsParam}&include=animesynonyms&page[size]=${animeIds.length}`;
         
-        const response = await fetch(url, {
+        const response = await fetchWithFallback(url, {
             method: 'GET',
             headers: { 'Accept': 'application/json' },
         });
@@ -2034,15 +2092,17 @@ async function loadFeaturedOpenings() {
         
         console.log(`Loading featured openings for ${season} ${year}...`);
         
+        const baseUrl = useDirectAPI ? API_DIRECT : API_BASE;
+        
         // Try using the animeyear endpoint first (returns grouped by season)
         // Include images for preview backgrounds
-        let url = `${API_BASE}/animeyear/${year}?include=animethemes.animethemeentries.videos,animethemes.song,animethemes.song.artists,animesynonyms,images`;
+        let url = `${baseUrl}/animeyear/${year}?include=animethemes.animethemeentries.videos,animethemes.song,animethemes.song.artists,animesynonyms,images`;
         
         // Add timeout for mobile networks
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout
         
-        let response = await fetch(url, {
+        let response = await fetchWithFallback(url, {
             method: 'GET',
             headers: { 'Accept': 'application/json' },
             signal: controller.signal
@@ -2066,12 +2126,12 @@ async function loadFeaturedOpenings() {
             }
         } else {
             // Fallback to filter-based endpoint
-            url = `${API_BASE}/anime/?filter[year]=${year}&filter[season]=${season}&include=animethemes.animethemeentries.videos,animethemes.song,animethemes.song.artists,animesynonyms,images&page[size]=50&sort=name`;
+            url = `${baseUrl}/anime/?filter[year]=${year}&filter[season]=${season}&include=animethemes.animethemeentries.videos,animethemes.song,animethemes.song.artists,animesynonyms,images&page[size]=50&sort=name`;
             
             const controller2 = new AbortController();
             const timeoutId2 = setTimeout(() => controller2.abort(), 15000);
             
-            response = await fetch(url, {
+            response = await fetchWithFallback(url, {
                 method: 'GET',
                 headers: { 'Accept': 'application/json' },
                 signal: controller2.signal
