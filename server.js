@@ -97,6 +97,36 @@ app.use((req, res, next) => {
     next();
 });
 
+// API Proxy endpoint to avoid CORS issues
+app.get('/api/proxy/animethemes/*', async (req, res) => {
+    try {
+        // Get the path after /api/proxy/animethemes/
+        const apiPath = req.path.replace('/api/proxy/animethemes', '');
+        const queryString = req.url.split('?')[1] || '';
+        const fullUrl = `https://api.animethemes.moe${apiPath}${queryString ? '?' + queryString : ''}`;
+        
+        console.log(`Proxying request to: ${fullUrl}`);
+        
+        const response = await fetch(fullUrl, {
+            method: 'GET',
+            headers: {
+                'Accept': 'application/json',
+                'User-Agent': 'Kaimaku/1.0'
+            }
+        });
+        
+        if (!response.ok) {
+            return res.status(response.status).json({ error: `API returned ${response.status}` });
+        }
+        
+        const data = await response.json();
+        res.json(data);
+    } catch (error) {
+        console.error('Proxy error:', error);
+        res.status(500).json({ error: 'Failed to proxy request', message: error.message });
+    }
+});
+
 // Serve static files (HTML, CSS, JS)
 app.use(express.static(__dirname));
 

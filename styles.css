@@ -1967,7 +1967,36 @@ body.light-theme .navbar {
     }
     
     .navbar-content {
-        flex-direction: column;
+        flex-direction: row;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        position: relative;
+    }
+    
+    .nav-home-btn {
+        order: 1;
+        flex-shrink: 0;
+    }
+    
+    .navbar-search {
+        order: 2;
+        position: relative;
+        left: auto;
+        transform: none;
+        flex: 1;
+        min-width: 0;
+        max-width: none;
+    }
+    
+    .navbar-auth {
+        order: 3;
+        flex-shrink: 0;
+        margin-left: auto;
+    }
+    
+    @media (max-width: 480px) {
+        .navbar-content {
+            flex-direction: column;
         gap: 1rem;
     }
     

@@ -1,7 +1,16 @@
 // API Configuration
 // Documentation: https://api-docs.animethemes.moe/wiki/anime/
 // Based on the API docs: GET /anime/ with q parameter for search
-const API_BASE = 'https://api.animethemes.moe';
+// Use proxy in production to avoid CORS issues
+const API_BASE = (() => {
+    // Auto-detect production URL and use proxy
+    if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+        // Production: use backend proxy to avoid CORS
+        return `${window.location.origin}/api/proxy/animethemes`;
+    }
+    // Development: use direct API (CORS should work locally)
+    return 'https://api.animethemes.moe';
+})();
 
 // Local Database Configuration
 // Uses a simple Node.js server that stores data in ratings.json
