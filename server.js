@@ -22,6 +22,21 @@ if (process.env.NODE_ENV === 'production' && process.env.RENDER_EXTERNAL_URL) {
     allowedOrigins.push(process.env.RENDER_EXTERNAL_URL);
 }
 
+// Add Vercel URL automatically if in production
+if (process.env.NODE_ENV === 'production' && process.env.VERCEL_URL) {
+    allowedOrigins.push(`https://${process.env.VERCEL_URL}`);
+}
+if (process.env.NODE_ENV === 'production' && process.env.VERCEL) {
+    // Allow Vercel preview and production URLs
+    if (process.env.VERCEL_URL) {
+        allowedOrigins.push(`https://${process.env.VERCEL_URL}`);
+    }
+    // Production domain (if set via Vercel environment variable)
+    if (process.env.PRODUCTION_URL) {
+        allowedOrigins.push(process.env.PRODUCTION_URL);
+    }
+}
+
 app.use(cors({
     origin: function (origin, callback) {
         // Allow requests with no origin (mobile apps, curl, etc.)
@@ -52,10 +67,10 @@ const sessionConfig = {
     rolling: true, // Reset expiration on every request to keep session alive
     name: 'kaimaku.sid', // Custom session name
     cookie: { 
-        secure: process.env.NODE_ENV === 'production', // HTTPS in production (Render uses HTTPS)
+        secure: process.env.NODE_ENV === 'production', // HTTPS in production (Render/Vercel use HTTPS)
         httpOnly: true,
         maxAge: 24 * 60 * 60 * 1000, // 24 hours
-        sameSite: 'lax', // 'lax' works for same-site requests (frontend and backend on same domain)
+        sameSite: process.env.VERCEL ? 'none' : 'lax', // 'none' for Vercel (cross-domain), 'lax' for same-domain
         path: '/' // Ensure cookie is available for all paths
         // Don't set domain - let browser handle it automatically
     }
@@ -289,7 +304,17 @@ app.get('/api/proxy/animethemes/*', async (req, res) => {
 });
 
 // Serve static files (HTML, CSS, JS)
-app.use(express.static(__dirname));
+// On Vercel, static files are served automatically from the root directory
+// On traditional servers, we serve them via Express
+if (!process.env.VERCEL) {
+    app.use(express.static(__dirname));
+} else {
+    // On Vercel, serve index.html for root and other routes
+    const path = require('path');
+    app.get('/', (req, res) => {
+        res.sendFile(path.join(__dirname, 'index.html'));
+    });
+}
 
 // Seeded random function (same as client)
 function seededRandom(seed) {
@@ -532,26 +557,42 @@ app.post('/api/ratings', async (req, res) => {
     }
 });
 
-// Start server immediately, initialize database in background
-// This ensures Render detects the port quickly
-const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`\n✅ Server running on port ${PORT}`);
-    console.log(`🌐 Server is ready to accept connections\n`);
-    console.log(`📊 Session store: ${sessionConfig.store ? 'PostgreSQL' : 'MemoryStore'}\n`);
-    
-    // Initialize database in background (non-blocking)
-    initializeDatabaseInBackground();
-});
+// Always export the app (for Vercel serverless functions)
+// This allows the app to be imported by api/index.js on Vercel
+module.exports = app;
 
-// Handle server errors
-server.on('error', (error) => {
-    if (error.code === 'EADDRINUSE') {
-        console.error(`❌ Port ${PORT} is already in use`);
-    } else {
-        console.error('❌ Server error:', error);
-    }
-    process.exit(1);
-});
+// Start server only if not running on Vercel
+// Vercel uses serverless functions and doesn't need a listening server
+if (!process.env.VERCEL) {
+    // Traditional server (Render, local development, etc.)
+    // Start server immediately, initialize database in background
+    // This ensures Render detects the port quickly
+    const server = app.listen(PORT, '0.0.0.0', () => {
+        console.log(`\n✅ Server running on port ${PORT}`);
+        console.log(`🌐 Server is ready to accept connections\n`);
+        console.log(`📊 Session store: ${sessionConfig.store ? 'PostgreSQL' : 'MemoryStore'}\n`);
+        
+        // Initialize database in background (non-blocking)
+        initializeDatabaseInBackground();
+    });
+
+    // Handle server errors
+    server.on('error', (error) => {
+        if (error.code === 'EADDRINUSE') {
+            console.error(`❌ Port ${PORT} is already in use`);
+        } else {
+            console.error('❌ Server error:', error);
+        }
+        process.exit(1);
+    });
+} else {
+    // Vercel serverless function - initialize database on cold start
+    // Note: This runs on cold start, connection pooling is handled by pg
+    // Database initialization is non-blocking for serverless functions
+    initializeDatabaseInBackground().catch(err => {
+        console.error('Database initialization error (non-blocking):', err.message);
+    });
+}
 
 // Initialize database in background
 async function initializeDatabaseInBackground() {
