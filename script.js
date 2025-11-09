@@ -18,6 +18,22 @@ const API_DIRECT = 'https://api.animethemes.moe';
 // Track if we should use direct API as fallback
 let useDirectAPI = false;
 
+// Mobile device detection
+const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+                      (window.matchMedia && window.matchMedia('(max-width: 768px)').matches) ||
+                      ('ontouchstart' in window);
+
+// Mobile-specific configuration
+if (isMobileDevice) {
+    console.log('[Mobile] Mobile device detected - using mobile-optimized interface');
+    document.body.classList.add('mobile-device');
+    // Mobile ALWAYS uses proxy to avoid CORS issues
+    useDirectAPI = false;
+} else {
+    console.log('[Desktop] Desktop device detected');
+    document.body.classList.add('desktop-device');
+}
+
 // Local Database Configuration
 // Uses a simple Node.js server that stores data in ratings.json
 // Make sure to run: npm install && npm start
@@ -270,7 +286,7 @@ function updateRatingDisplay(value) {
 }
 
 // Search functionality with spam prevention
-async function handleSearch() {
+async function handleSearch(queryParam = null) {
     // Prevent spam clicking
     const now = Date.now();
     if (isSearching || (now - lastSearchTime) < SEARCH_COOLDOWN) {
@@ -281,7 +297,21 @@ async function handleSearch() {
         }
     }
     
-    const query = (searchInput && searchInput.value.trim()) || '';
+    // Get query from parameter or inputs
+    let query = queryParam;
+    if (!query) {
+        query = (searchInput && searchInput.value.trim()) || '';
+        if (!query && navbarSearchInput) {
+            query = navbarSearchInput.value.trim();
+        }
+        if (!query) {
+            const mobileSearchInput = document.getElementById('mobileSearchInput');
+            if (mobileSearchInput) {
+                query = mobileSearchInput.value.trim();
+            }
+        }
+    }
+    
     if (!query) {
         showNotification('Please enter a search term');
         return;
@@ -341,18 +371,20 @@ async function handleSearch() {
     }
 }
 
-async function handleNavbarSearch() {
-    if (!navbarSearchInput) return;
+async function handleNavbarSearch(queryParam = null) {
+    const query = queryParam || (navbarSearchInput ? navbarSearchInput.value.trim() : '');
+    if (!query) return;
     
-    // Sync navbar search with home search input
-    if (searchInput) {
-        searchInput.value = navbarSearchInput.value;
-    }
+    // Sync search inputs
+    if (navbarSearchInput) navbarSearchInput.value = query;
+    if (searchInput) searchInput.value = query;
+    const mobileSearchInput = document.getElementById('mobileSearchInput');
+    if (mobileSearchInput) mobileSearchInput.value = query;
     
-    await handleSearch();
+    await handleSearch(query);
     
-    // Clear navbar search after search
-    navbarSearchInput.value = '';
+    // Clear navbar search after search (optional)
+    // navbarSearchInput.value = '';
 }
 
 // Helper function to process API response
@@ -384,36 +416,18 @@ function processResponse(data, url) {
     return [];
 }
 
-// Detect if we're on a mobile device
-const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
-                      (window.matchMedia && window.matchMedia('(max-width: 768px)').matches) ||
-                      ('ontouchstart' in window);
-
-// Log mobile detection for debugging
-if (isMobileDevice) {
-    console.log('[Mobile] Mobile device detected - will ALWAYS use proxy to avoid CORS errors');
-} else {
-    console.log('[Desktop] Desktop device detected - may use direct API if proxy fails');
-}
-
 // Helper function to fetch with proxy fallback to direct API
-// IMPORTANT: On mobile, NEVER use direct API (always use proxy) to avoid CORS errors
+// IMPORTANT: Mobile devices ALWAYS use proxy (never direct API) to avoid CORS
 async function fetchWithFallback(url, options = {}) {
     try {
         const response = await fetch(url, options);
         
-        // On mobile, NEVER try direct API - it will always cause CORS errors
-        // Always use the proxy on mobile devices
+        // Mobile devices: NEVER try direct API (always causes CORS errors)
         if (isMobileDevice) {
-            // On mobile, if proxy fails, return the error - don't try direct API
-            if (!response.ok) {
-                console.error(`[Mobile] Proxy returned ${response.status}. Cannot use direct API due to CORS restrictions.`);
-                return response;
-            }
             return response;
         }
         
-        // Desktop: If proxy returns 403, try direct API as fallback (only on desktop)
+        // Desktop: If proxy returns 403, try direct API as fallback
         if (response.status === 403 && API_BASE !== API_DIRECT && url.includes(API_BASE) && !isMobileDevice) {
             console.warn(`[Proxy] Received 403, trying direct API as fallback (desktop only)...`);
             const directUrl = url.replace(API_BASE, API_DIRECT);
@@ -437,7 +451,7 @@ async function fetchWithFallback(url, options = {}) {
         
         return response;
     } catch (error) {
-        // On mobile, NEVER try direct API
+        // Mobile: Never try direct API
         if (isMobileDevice) {
             console.error(`[Mobile] Proxy request failed: ${error.message}. Cannot use direct API due to CORS.`);
             throw error;
@@ -464,8 +478,8 @@ async function searchAnime(query) {
     // 3. Page size limit appears to be around 100 (422 error for 1000)
     const encodedQuery = encodeURIComponent(query);
     
-    // On mobile, ALWAYS use proxy (never direct API) to avoid CORS errors
-    // On desktop, use direct API only if proxy is blocked and we've confirmed direct works
+    // Mobile: ALWAYS use proxy (never direct API)
+    // Desktop: Use direct API only if proxy is blocked and we've confirmed direct works
     const baseUrl = (isMobileDevice || !useDirectAPI) ? API_BASE : API_DIRECT;
     
     // Primary: Use global search endpoint
@@ -554,12 +568,12 @@ async function searchAnime(query) {
     // Fallback: Fetch anime list with pagination and filter client-side
     console.log('Search endpoints returned no results. Trying paginated fetch with client-side filtering...');
     
-    // On mobile, always use proxy; on desktop, use direct API only if confirmed working
-    const paginationBaseUrl = (isMobileDevice || !useDirectAPI) ? API_BASE : API_DIRECT;
-    
     // Try fetching multiple pages if needed
     let allAnime = [];
     const pageSize = 100; // Safe page size to avoid 422 errors
+    
+    // Mobile: use proxy; Desktop: use direct API only if confirmed working
+    const paginationBaseUrl = (isMobileDevice || !useDirectAPI) ? API_BASE : API_DIRECT;
     
     for (let page = 1; page <= 5; page++) { // Try up to 5 pages (500 anime)
         try {
@@ -744,7 +758,7 @@ async function fetchAnimeWithIncludes(animeIds) {
     try {
         // Fetch anime by IDs using filter[id] - include synonyms for English name search
         const idsParam = animeIds.join(',');
-        // On mobile, ALWAYS use proxy (never direct API) to avoid CORS errors
+        // Mobile: ALWAYS use proxy
         const baseUrl = (isMobileDevice || !useDirectAPI) ? API_BASE : API_DIRECT;
         const url = `${baseUrl}/anime/?filter[id]=${idsParam}&include=animethemes.animethemeentries.videos,animethemes.song,animethemes.song.artists,animesynonyms&page[size]=${animeIds.length}`;
         
@@ -776,7 +790,7 @@ async function enhanceAnimeWithSynonyms(animeList) {
         // Fetch synonyms for anime that don't have them
         const animeIds = needsSynonyms.map(a => a.id);
         const idsParam = animeIds.join(',');
-        // On mobile, ALWAYS use proxy (never direct API) to avoid CORS errors
+        // Mobile: ALWAYS use proxy
         const baseUrl = (isMobileDevice || !useDirectAPI) ? API_BASE : API_DIRECT;
         const url = `${baseUrl}/anime/?filter[id]=${idsParam}&include=animesynonyms&page[size]=${animeIds.length}`;
         
@@ -1211,18 +1225,12 @@ async function playTheme({ anime, theme }) {
         videoPlayer.progressHandler = progressHandler;
         videoPlayer.canPlayThroughHandler = canPlayThroughHandler;
         
-    // Set video source with aggressive preloading
-    videoPlayer.src = videoUrl;
-    videoPlayer.preload = 'auto'; // Preload entire video
-    // Mobile optimizations
-    videoPlayer.setAttribute('playsinline', 'true');
-    videoPlayer.setAttribute('webkit-playsinline', 'true');
-    videoPlayer.setAttribute('x5-playsinline', 'true'); // For Android X5 browser
-    videoPlayer.setAttribute('x5-video-player-type', 'h5'); // For Android X5 browser
-    videoPlayer.setAttribute('x5-video-player-fullscreen', 'true'); // For Android X5 browser
-    // Disable seeking while buffering to prevent interruptions
-    videoPlayer.currentTime = 0;
-    videoPlayer.load();
+        // Set video source with aggressive preloading
+        videoPlayer.src = videoUrl;
+        videoPlayer.preload = 'auto'; // Preload entire video
+        // Disable seeking while buffering to prevent interruptions
+        videoPlayer.currentTime = 0;
+        videoPlayer.load();
         
         // Start checking buffer immediately
         isWaitingForBuffer = true;
@@ -1581,132 +1589,42 @@ function setupCustomControls() {
     document.addEventListener('mouseup', handleMouseUp);
     
     // Fullscreen
-    // Enhanced fullscreen for mobile
     fullscreenBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || 
-                        (window.matchMedia && window.matchMedia('(max-width: 768px)').matches);
-        
         if (!document.fullscreenElement && !document.webkitFullscreenElement && !document.mozFullScreenElement) {
-            // Enter fullscreen
-            if (isMobile && videoPlayer.webkitEnterFullscreen) {
-                // iOS native fullscreen
-                videoPlayer.webkitEnterFullscreen();
-            } else if (videoWrapper.requestFullscreen) {
-                videoWrapper.requestFullscreen().catch(err => {
-                    console.log('Fullscreen error:', err);
-                    // Fallback: try video element fullscreen
-                    if (videoPlayer.requestFullscreen) {
-                        videoPlayer.requestFullscreen().catch(() => {});
-                    }
-                });
+            if (videoWrapper.requestFullscreen) {
+                videoWrapper.requestFullscreen();
             } else if (videoWrapper.webkitRequestFullscreen) {
                 videoWrapper.webkitRequestFullscreen();
             } else if (videoWrapper.mozRequestFullScreen) {
                 videoWrapper.mozRequestFullScreen();
-            } else if (videoPlayer.requestFullscreen) {
-                videoPlayer.requestFullscreen().catch(() => {});
             }
         } else {
-            // Exit fullscreen
             if (document.exitFullscreen) {
                 document.exitFullscreen();
             } else if (document.webkitExitFullscreen) {
                 document.webkitExitFullscreen();
             } else if (document.mozCancelFullScreen) {
                 document.mozCancelFullScreen();
-            } else if (videoPlayer.webkitExitFullscreen) {
-                videoPlayer.webkitExitFullscreen();
             }
         }
     });
     
-    // Handle fullscreen changes
-    const handleFullscreenChange = () => {
-        const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement);
-        if (isFullscreen) {
-            videoWrapper.classList.add('fullscreen-active');
-            // On mobile, hide controls initially in fullscreen
-            if (window.innerWidth <= 768) {
+    // Show controls on mouse move
+    const showControls = () => {
+        videoWrapper.classList.add('controls-visible');
+        if (controlsTimeout) {
+            clearTimeout(controlsTimeout);
+        }
+        if (!videoPlayer.paused) {
+            controlsTimeout = setTimeout(() => {
                 videoWrapper.classList.remove('controls-visible');
-            }
-        } else {
-            videoWrapper.classList.remove('fullscreen-active');
+            }, 3000);
         }
     };
     
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
-    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
-    document.addEventListener('mozfullscreenchange', handleFullscreenChange);
-    
-    // Mobile touch controls - show/hide controls on tap
-    let mobileControlsTimeout;
-    let lastTapTime = 0;
-    const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || 
-                          (window.matchMedia && window.matchMedia('(max-width: 768px)').matches);
-    
-    if (isMobileDevice) {
-        videoWrapper.addEventListener('touchstart', (e) => {
-            // Double tap to play/pause (only if not on control buttons)
-            if (!e.target.closest('.custom-controls') && !e.target.closest('.control-btn')) {
-                const currentTime = Date.now();
-                if (currentTime - lastTapTime < 300) {
-                    e.preventDefault();
-                    if (videoPlayer.paused) {
-                        videoPlayer.play().catch(() => {});
-                    } else {
-                        videoPlayer.pause();
-                    }
-                    lastTapTime = 0;
-                } else {
-                    lastTapTime = currentTime;
-                }
-            }
-            
-            // Show controls on tap
-            videoWrapper.classList.add('controls-visible');
-            clearTimeout(mobileControlsTimeout);
-            
-            // Hide controls after 3 seconds of inactivity
-            mobileControlsTimeout = setTimeout(() => {
-                if (!videoPlayer.paused) {
-                    videoWrapper.classList.remove('controls-visible');
-                }
-            }, 3000);
-        }, { passive: true });
-        
-        // Keep controls visible when paused
-        videoPlayer.addEventListener('pause', () => {
-            videoWrapper.classList.add('controls-visible');
-            clearTimeout(mobileControlsTimeout);
-        });
-        
-        videoPlayer.addEventListener('play', () => {
-            // Hide controls after a delay when playing
-            mobileControlsTimeout = setTimeout(() => {
-                videoWrapper.classList.remove('controls-visible');
-            }, 3000);
-        });
-    }
-    
-    // Show controls on mouse move (desktop only)
-    let controlsTimeout;
-    if (!isMobileDevice) {
-        const showControls = () => {
-            videoWrapper.classList.add('controls-visible');
-            if (controlsTimeout) {
-                clearTimeout(controlsTimeout);
-            }
-            if (!videoPlayer.paused) {
-                controlsTimeout = setTimeout(() => {
-                    videoWrapper.classList.remove('controls-visible');
-                }, 3000);
-            }
-        };
-        
-        videoWrapper.addEventListener('mousemove', showControls);
-        videoWrapper.addEventListener('mouseenter', showControls);
-    }
+    videoWrapper.addEventListener('mousemove', showControls);
+    videoWrapper.addEventListener('mouseenter', showControls);
     
     // Click video to play/pause (but not when clicking controls)
     videoWrapper.addEventListener('click', (e) => {
@@ -2225,7 +2143,7 @@ async function loadFeaturedOpenings() {
         
         console.log(`Loading featured openings for ${season} ${year}...`);
         
-        // On mobile, ALWAYS use proxy (never direct API) to avoid CORS errors
+        // Mobile: ALWAYS use proxy
         const baseUrl = (isMobileDevice || !useDirectAPI) ? API_BASE : API_DIRECT;
         
         // Try using the animeyear endpoint first (returns grouped by season)
@@ -3228,99 +3146,6 @@ function setupNewFeatures() {
     setupViewToggle();
 }
 
-// Mobile Menu Setup
-function setupMobileMenu() {
-    const mobileMenuToggle = document.getElementById('mobileMenuToggle');
-    const navbarAuth = document.querySelector('.navbar-auth');
-    const menuIcon = document.getElementById('menuIcon');
-    const closeIcon = document.getElementById('closeIcon');
-    const filterDropdown = document.getElementById('filterDropdown');
-    
-    if (!mobileMenuToggle || !navbarAuth) return;
-    
-    let isMenuOpen = false;
-    
-    // Toggle mobile menu
-    mobileMenuToggle.addEventListener('click', (e) => {
-        e.stopPropagation();
-        isMenuOpen = !isMenuOpen;
-        
-        if (isMenuOpen) {
-            navbarAuth.classList.add('mobile-menu-open');
-            if (menuIcon) menuIcon.style.display = 'none';
-            if (closeIcon) closeIcon.style.display = 'block';
-        } else {
-            navbarAuth.classList.remove('mobile-menu-open');
-            if (menuIcon) menuIcon.style.display = 'block';
-            if (closeIcon) closeIcon.style.display = 'none';
-        }
-    });
-    
-    // Close menu when clicking outside
-    document.addEventListener('click', (e) => {
-        if (isMenuOpen && !navbarAuth.contains(e.target) && !mobileMenuToggle.contains(e.target)) {
-            isMenuOpen = false;
-            navbarAuth.classList.remove('mobile-menu-open');
-            if (menuIcon) menuIcon.style.display = 'block';
-            if (closeIcon) closeIcon.style.display = 'none';
-        }
-    });
-    
-    // Close menu when clicking on auth buttons
-    const authButtons = navbarAuth.querySelectorAll('.nav-auth-btn');
-    authButtons.forEach(btn => {
-        btn.addEventListener('click', () => {
-            if (isMenuOpen) {
-                isMenuOpen = false;
-                navbarAuth.classList.remove('mobile-menu-open');
-                if (menuIcon) menuIcon.style.display = 'block';
-                if (closeIcon) closeIcon.style.display = 'none';
-            }
-        });
-    });
-    
-    // Close filter dropdown when opening mobile menu
-    mobileMenuToggle.addEventListener('click', () => {
-        if (filterDropdown && !filterDropdown.classList.contains('hidden')) {
-            filterDropdown.classList.add('hidden');
-        }
-    });
-    
-    // Prevent body scroll when filter dropdown is open on mobile
-    const filterBtn = document.getElementById('filterBtn');
-    if (filterBtn && filterDropdown) {
-        filterBtn.addEventListener('click', () => {
-            if (window.innerWidth <= 768) {
-                if (!filterDropdown.classList.contains('hidden')) {
-                    document.body.style.overflow = 'hidden';
-                } else {
-                    document.body.style.overflow = '';
-                }
-            }
-        });
-        
-        // Also close filter when clicking apply/clear
-        const applyFilters = document.getElementById('applyFilters');
-        const clearFilters = document.getElementById('clearFilters');
-        if (applyFilters) {
-            applyFilters.addEventListener('click', () => {
-                if (window.innerWidth <= 768) {
-                    filterDropdown.classList.add('hidden');
-                    document.body.style.overflow = '';
-                }
-            });
-        }
-        if (clearFilters) {
-            clearFilters.addEventListener('click', () => {
-                if (window.innerWidth <= 768) {
-                    filterDropdown.classList.add('hidden');
-                    document.body.style.overflow = '';
-                }
-            });
-        }
-    }
-}
-
 // Load saved preferences
 function loadPreferences() {
     // Load theme preference
@@ -3876,6 +3701,135 @@ function setupViewToggle() {
             }
             
             localStorage.setItem('kaimaku-view', isListView ? 'list' : 'grid');
+        });
+    }
+}
+
+// Mobile Menu Setup
+function setupMobileMenu() {
+    const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+    const navbarAuth = document.querySelector('.navbar-auth');
+    const menuIcon = document.getElementById('menuIcon');
+    const closeIcon = document.getElementById('closeIcon');
+    const mobileSearchContainer = document.getElementById('mobileSearchContainer');
+    const mobileSearchInput = document.getElementById('mobileSearchInput');
+    const mobileSearchBtn = document.getElementById('mobileSearchBtn');
+    const navbarSearchInput = document.getElementById('navbarSearchInput');
+    const navbarSearchBtn = document.getElementById('navbarSearchBtn');
+    
+    if (!mobileMenuToggle || !navbarAuth) return;
+    
+    let isMenuOpen = false;
+    
+    // Toggle mobile menu
+    mobileMenuToggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        isMenuOpen = !isMenuOpen;
+        
+        const navbar = document.querySelector('.navbar');
+        
+        if (isMenuOpen) {
+            navbarAuth.classList.add('mobile-menu-open');
+            if (navbar) navbar.classList.add('mobile-search-active');
+            if (menuIcon) menuIcon.style.display = 'none';
+            if (closeIcon) closeIcon.style.display = 'block';
+            // Show mobile search when menu opens
+            if (mobileSearchContainer) {
+                mobileSearchContainer.style.display = 'block';
+                setTimeout(() => {
+                    if (mobileSearchInput) mobileSearchInput.focus();
+                }, 100);
+            }
+        } else {
+            navbarAuth.classList.remove('mobile-menu-open');
+            if (navbar) navbar.classList.remove('mobile-search-active');
+            if (menuIcon) menuIcon.style.display = 'block';
+            if (closeIcon) closeIcon.style.display = 'none';
+            // Hide mobile search when menu closes
+            if (mobileSearchContainer) {
+                mobileSearchContainer.style.display = 'none';
+            }
+        }
+    });
+    
+    // Mobile search handling
+    if (mobileSearchBtn && mobileSearchInput) {
+        const handleMobileSearch = () => {
+            const query = mobileSearchInput.value.trim();
+            if (query) {
+                handleNavbarSearch(query);
+                // Close menu after search
+                if (isMenuOpen) {
+                    isMenuOpen = false;
+                    navbarAuth.classList.remove('mobile-menu-open');
+                    if (menuIcon) menuIcon.style.display = 'block';
+                    if (closeIcon) closeIcon.style.display = 'none';
+                    if (mobileSearchContainer) mobileSearchContainer.style.display = 'none';
+                }
+            }
+        };
+        
+        mobileSearchBtn.addEventListener('click', handleMobileSearch);
+        mobileSearchInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                handleMobileSearch();
+            }
+        });
+    }
+    
+    // Sync mobile and desktop search inputs
+    if (mobileSearchInput && navbarSearchInput) {
+        mobileSearchInput.addEventListener('input', (e) => {
+            navbarSearchInput.value = e.target.value;
+        });
+        navbarSearchInput.addEventListener('input', (e) => {
+            mobileSearchInput.value = e.target.value;
+        });
+    }
+    
+    // Close menu when clicking outside
+    document.addEventListener('click', (e) => {
+        if (isMenuOpen && 
+            !navbarAuth.contains(e.target) && 
+            !mobileMenuToggle.contains(e.target) &&
+            !mobileSearchContainer?.contains(e.target)) {
+            isMenuOpen = false;
+            navbarAuth.classList.remove('mobile-menu-open');
+            if (menuIcon) menuIcon.style.display = 'block';
+            if (closeIcon) closeIcon.style.display = 'none';
+            if (mobileSearchContainer) mobileSearchContainer.style.display = 'none';
+        }
+    });
+    
+    // Close menu when clicking on auth buttons
+    const authButtons = navbarAuth.querySelectorAll('.nav-auth-btn');
+    authButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (isMenuOpen) {
+                isMenuOpen = false;
+                navbarAuth.classList.remove('mobile-menu-open');
+                if (menuIcon) menuIcon.style.display = 'block';
+                if (closeIcon) closeIcon.style.display = 'none';
+                if (mobileSearchContainer) mobileSearchContainer.style.display = 'none';
+            }
+        });
+    });
+    
+    // Handle view toggle on mobile (if exists)
+    const viewToggle = document.getElementById('viewToggle');
+    if (viewToggle && isMobileDevice) {
+        // On mobile, add view toggle to menu
+        viewToggle.addEventListener('click', () => {
+            if (isMenuOpen) {
+                // Close menu after toggling view on mobile
+                setTimeout(() => {
+                    isMenuOpen = false;
+                    navbarAuth.classList.remove('mobile-menu-open');
+                    if (menuIcon) menuIcon.style.display = 'block';
+                    if (closeIcon) closeIcon.style.display = 'none';
+                    if (mobileSearchContainer) mobileSearchContainer.style.display = 'none';
+                }, 300);
+            }
         });
     }
 }

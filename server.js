@@ -19,57 +19,28 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
 
 // Add Render URL automatically if in production
 if (process.env.NODE_ENV === 'production' && process.env.RENDER_EXTERNAL_URL) {
-    const renderUrl = process.env.RENDER_EXTERNAL_URL;
-    allowedOrigins.push(renderUrl);
-    // Also add HTTPS version if HTTP was provided, and vice versa (for mobile browsers)
-    if (renderUrl.startsWith('http://')) {
-        allowedOrigins.push(renderUrl.replace('http://', 'https://'));
-    } else if (renderUrl.startsWith('https://')) {
-        allowedOrigins.push(renderUrl.replace('https://', 'http://'));
-    }
-    console.log(`[CORS] Allowed origins: ${allowedOrigins.join(', ')}`);
+    allowedOrigins.push(process.env.RENDER_EXTERNAL_URL);
 }
 
-// CORS configuration - be more permissive for API proxy
 app.use(cors({
     origin: function (origin, callback) {
-        // Always allow requests with no origin (mobile apps, curl, etc.)
+        // Allow requests with no origin (mobile apps, curl, etc.)
         if (!origin) return callback(null, true);
         
-        // Always allow requests to the proxy endpoint (needed for mobile)
-        // This allows any origin to access the proxy, which then fetches from the API server-side
+        // In production, check against allowed origins
         if (process.env.NODE_ENV === 'production') {
-            // Check if origin matches any allowed origin (exact match or same hostname)
-            const originMatches = allowedOrigins.some(allowed => {
-                try {
-                    const allowedUrl = new URL(allowed);
-                    const originUrl = new URL(origin);
-                    // Match if same hostname (allows for http/https variations and subdomains)
-                    return allowedUrl.hostname === originUrl.hostname || 
-                           originUrl.hostname.endsWith('.' + allowedUrl.hostname) ||
-                           allowedUrl.hostname.endsWith('.' + originUrl.hostname);
-                } catch (e) {
-                    // If URL parsing fails, do exact match
-                    return allowed === origin;
-                }
-            });
-            
-            if (originMatches || allowedOrigins.indexOf(origin) !== -1) {
+            if (allowedOrigins.indexOf(origin) !== -1) {
                 callback(null, true);
             } else {
-                // In production, still allow but log warning (for proxy endpoint)
-                console.warn(`[CORS] Unknown origin: ${origin}. Allowing for proxy access.`);
-                callback(null, true); // Allow for proxy endpoint
+                console.warn(`CORS blocked origin: ${origin}. Allowed: ${allowedOrigins.join(', ')}`);
+                callback(new Error('Not allowed by CORS'));
             }
         } else {
             // In development, allow all origins
             callback(null, true);
         }
     },
-    credentials: true,
-    methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Accept', 'Authorization', 'X-Requested-With'],
-    exposedHeaders: ['Content-Length', 'Content-Type']
+    credentials: true
 }));
 app.use(express.json());
 
@@ -181,35 +152,15 @@ app.get('/api/test-animethemes', async (req, res) => {
     }
 });
 
-// Handle OPTIONS requests for CORS preflight (important for mobile browsers)
-app.options('/api/proxy/animethemes/*', (req, res) => {
-    const origin = req.headers.origin;
-    res.setHeader('Access-Control-Allow-Origin', origin || '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization, X-Requested-With');
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.setHeader('Access-Control-Max-Age', '86400'); // 24 hours
-    res.sendStatus(204);
-});
-
 // API Proxy endpoint to avoid CORS issues
 app.get('/api/proxy/animethemes/*', async (req, res) => {
-    // Set CORS headers FIRST, before any processing
-    // This ensures mobile browsers can access the proxy
-    const origin = req.headers.origin;
-    res.setHeader('Access-Control-Allow-Origin', origin || '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization, X-Requested-With');
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Type');
-    
     try {
         // Get the path after /api/proxy/animethemes/
         const apiPath = req.path.replace('/api/proxy/animethemes', '');
         const queryString = req.url.split('?')[1] || '';
         const fullUrl = `https://api.animethemes.moe${apiPath}${queryString ? '?' + queryString : ''}`;
         
-        console.log(`[Proxy] Requesting: ${fullUrl} from origin: ${origin || 'unknown'}`);
+        console.log(`[Proxy] Requesting: ${fullUrl}`);
         
         // Use Node.js built-in http/https modules
         const https = require('https');
@@ -218,17 +169,14 @@ app.get('/api/proxy/animethemes/*', async (req, res) => {
         
         const parsedUrl = new URL(fullUrl);
         
-        // Use browser-like headers to avoid being blocked
+        // Use minimal headers - API docs say headers are not required
         const options = {
             hostname: parsedUrl.hostname,
             path: parsedUrl.pathname + parsedUrl.search,
             method: 'GET',
             headers: {
-                'Accept': 'application/json, */*',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Referer': 'https://api.animethemes.moe/',
-                'Cache-Control': 'no-cache'
+                'Accept': 'application/json',
+                'User-Agent': 'Mozilla/5.0 (compatible; Kaimaku/1.0; +https://github.com/potverse-hub/kaimaku)'
             },
             timeout: 30000 // 30 second timeout
         };
@@ -291,7 +239,20 @@ app.get('/api/proxy/animethemes/*', async (req, res) => {
         // Log response for debugging
         console.log(`[Proxy] Response status: ${proxyResponse.status} for ${apiPath}`);
         
-        // CORS headers are already set above, don't override them
+        // Forward response headers (especially CORS headers)
+        if (proxyResponse.headers['access-control-allow-origin']) {
+            res.setHeader('Access-Control-Allow-Origin', proxyResponse.headers['access-control-allow-origin']);
+        }
+        if (proxyResponse.headers['access-control-allow-methods']) {
+            res.setHeader('Access-Control-Allow-Methods', proxyResponse.headers['access-control-allow-methods']);
+        }
+        if (proxyResponse.headers['access-control-allow-headers']) {
+            res.setHeader('Access-Control-Allow-Headers', proxyResponse.headers['access-control-allow-headers']);
+        }
+        
+        // Set CORS headers for our domain
+        res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
+        res.setHeader('Access-Control-Allow-Credentials', 'true');
         
         // Handle non-200 status codes
         if (proxyResponse.status !== 200) {
@@ -309,29 +270,20 @@ app.get('/api/proxy/animethemes/*', async (req, res) => {
                 errorData.message = proxyResponse.data.substring(0, 200);
             }
             
-            // Return error with CORS headers (already set above)
             return res.status(proxyResponse.status).json(errorData);
         }
         
         // Parse and return successful response
         try {
             const data = JSON.parse(proxyResponse.data);
-            // CORS headers already set above
             res.json(data);
         } catch (parseError) {
             console.error('[Proxy] JSON parse error:', parseError);
             console.error('[Proxy] Response data:', proxyResponse.data.substring(0, 500));
-            // CORS headers already set above - important for mobile
             res.status(500).json({ error: 'Invalid JSON response from API', message: parseError.message });
         }
     } catch (error) {
         console.error('[Proxy] Proxy error:', error);
-        // IMPORTANT: Set CORS headers even on errors so mobile browsers don't get CORS errors
-        const origin = req.headers.origin;
-        res.setHeader('Access-Control-Allow-Origin', origin || '*');
-        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization, X-Requested-With');
-        res.setHeader('Access-Control-Allow-Credentials', 'true');
         res.status(500).json({ error: 'Failed to proxy request', message: error.message });
     }
 });
