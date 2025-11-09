@@ -304,14 +304,37 @@ app.get('/api/proxy/animethemes/*', async (req, res) => {
 });
 
 // Serve static files (HTML, CSS, JS)
-// On Vercel, static files are served automatically from the root directory
-// On traditional servers, we serve them via Express
 if (!process.env.VERCEL) {
+    // Traditional server: serve all static files via Express
     app.use(express.static(__dirname));
 } else {
-    // On Vercel, serve index.html for root and other routes
+    // Vercel: static files are served automatically by Vercel from root directory
+    // Only serve index.html for non-API, non-static routes (client-side routing)
     const path = require('path');
+    
+    // Serve index.html for root and other non-API routes
+    // Static files (CSS, JS, images) are handled by Vercel's routing
     app.get('/', (req, res) => {
+        res.sendFile(path.join(__dirname, 'index.html'));
+    });
+    
+    // For any other non-API route, also serve index.html (for client-side routing)
+    // This handles hash-based routing (#home, etc.)
+    app.get('*', (req, res, next) => {
+        // Don't handle API routes - they should be handled by the API handlers above
+        if (req.path.startsWith('/api/')) {
+            return next();
+        }
+        
+        // Don't handle static files - Vercel serves them automatically
+        const staticExtensions = ['.css', '.js', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.json', '.woff', '.woff2', '.ttf', '.eot', '.html'];
+        if (staticExtensions.some(ext => req.path.endsWith(ext))) {
+            // Return 404 for static files that Vercel should serve
+            // If we get here, it means Vercel didn't serve it, so it doesn't exist
+            return res.status(404).json({ error: 'File not found' });
+        }
+        
+        // For all other routes, serve index.html (SPA routing)
         res.sendFile(path.join(__dirname, 'index.html'));
     });
 }
