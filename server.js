@@ -97,63 +97,20 @@ app.use((req, res, next) => {
     next();
 });
 
-// Test endpoint to verify proxy is working
-app.get('/api/proxy/test', (req, res) => {
-    res.json({ message: 'Proxy endpoint is working!', timestamp: new Date().toISOString() });
-});
-
 // API Proxy endpoint to avoid CORS issues
-// Use middleware to catch all routes starting with /api/proxy/animethemes
-app.use((req, res, next) => {
-    // Check if this is a proxy request
-    if (req.path && req.path.startsWith('/api/proxy/animethemes')) {
-        // Only handle GET requests
-        if (req.method !== 'GET') {
-            return res.status(405).json({ error: 'Method not allowed' });
-        }
-        
-        // Handle the proxy request
-        handleProxyRequest(req, res);
-        return; // Don't call next() - we've handled it
-    }
-    next();
-});
-
-async function handleProxyRequest(req, res) {
+app.get('/api/proxy/animethemes/*', async (req, res) => {
     try {
-        // Extract path from originalUrl (full path) or req.url
-        // req.originalUrl will be like '/api/proxy/animethemes/animeyear/2025?include=...'
-        const fullPath = req.originalUrl || req.url || '';
+        // Get the path after /api/proxy/animethemes/
+        const apiPath = req.path.replace('/api/proxy/animethemes', '');
+        const queryString = req.url.split('?')[1] || '';
+        const fullUrl = `https://api.animethemes.moe${apiPath}${queryString ? '?' + queryString : ''}`;
         
-        // Strip the /api/proxy/animethemes prefix
-        let apiPath = fullPath;
-        if (apiPath.startsWith('/api/proxy/animethemes')) {
-            apiPath = apiPath.substring('/api/proxy/animethemes'.length);
-        }
-        
-        // If empty, default to root
-        if (!apiPath || apiPath === '') {
-            apiPath = '/';
-        }
-        
-        // Split path and query
-        const urlParts = apiPath.split('?');
-        let pathPart = urlParts[0] || '/';
-        const queryString = urlParts.length > 1 ? urlParts.slice(1).join('?') : '';
-        
-        // Ensure path starts with /
-        if (!pathPart.startsWith('/')) {
-            pathPart = '/' + pathPart;
-        }
-        
-        // Build full URL
-        const fullUrl = `https://api.animethemes.moe${pathPart}${queryString ? '?' + queryString : ''}`;
-        
-        console.log(`[PROXY] ${req.method} ${req.originalUrl} -> ${fullUrl}`);
+        console.log(`Proxying request to: ${fullUrl}`);
         
         // Use Node.js built-in http/https modules
         const https = require('https');
         const http = require('http');
+        const url = require('url');
         
         const parsedUrl = new URL(fullUrl);
         const options = {
@@ -162,16 +119,7 @@ async function handleProxyRequest(req, res) {
             method: 'GET',
             headers: {
                 'Accept': 'application/json',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Referer': 'https://animethemes.moe/',
-                'Origin': 'https://animethemes.moe',
-                'Connection': 'keep-alive',
-                'Cache-Control': 'no-cache',
-                'DNT': '1',
-                'Sec-Fetch-Dest': 'empty',
-                'Sec-Fetch-Mode': 'cors',
-                'Sec-Fetch-Site': 'same-site'
+                'User-Agent': 'Kaimaku/1.0'
             }
         };
         
@@ -184,7 +132,7 @@ async function handleProxyRequest(req, res) {
                     data += chunk;
                 });
                 res.on('end', () => {
-                    resolve({ status: res.statusCode, data: data, headers: res.headers });
+                    resolve({ status: res.statusCode, data: data });
                 });
             });
             
@@ -192,38 +140,11 @@ async function handleProxyRequest(req, res) {
                 reject(error);
             });
             
-            // Set timeout
-            req.setTimeout(20000, () => {
-                req.destroy();
-                reject(new Error('Request timeout'));
-            });
-            
             req.end();
         });
         
         if (proxyResponse.status !== 200) {
-            // Log the actual error response from API
-            let errorBody = '';
-            try {
-                const errorData = JSON.parse(proxyResponse.data);
-                errorBody = JSON.stringify(errorData);
-            } catch (e) {
-                errorBody = proxyResponse.data.substring(0, 200); // First 200 chars
-            }
-            console.error(`Proxy error: API returned ${proxyResponse.status}`);
-            console.error(`Error response: ${errorBody}`);
-            console.error(`Response headers:`, proxyResponse.headers);
-            
-            // Return the actual error to client
-            try {
-                const errorData = JSON.parse(proxyResponse.data);
-                return res.status(proxyResponse.status).json(errorData);
-            } catch (e) {
-                return res.status(proxyResponse.status).json({ 
-                    error: `API returned ${proxyResponse.status}`,
-                    message: proxyResponse.data.substring(0, 500)
-                });
-            }
+            return res.status(proxyResponse.status).json({ error: `API returned ${proxyResponse.status}` });
         }
         
         const data = JSON.parse(proxyResponse.data);
@@ -232,8 +153,7 @@ async function handleProxyRequest(req, res) {
         console.error('Proxy error:', error);
         res.status(500).json({ error: 'Failed to proxy request', message: error.message });
     }
-    // Request handled
-}
+});
 
 // Serve static files (HTML, CSS, JS)
 app.use(express.static(__dirname));
@@ -320,7 +240,7 @@ app.post('/api/register', async (req, res) => {
                 console.error('Error saving session:', err);
                 return res.status(500).json({ error: 'Failed to save session' });
             }
-            res.json({ success: true, username });
+        res.json({ success: true, username });
         });
     } catch (error) {
         console.error('Error registering user:', error);
@@ -373,7 +293,7 @@ app.post('/api/login', async (req, res) => {
                 console.log('Login - Cookie value:', cookieStr.substring(0, 100) + '...');
             }
             
-            res.json({ success: true, username });
+        res.json({ success: true, username });
         });
     } catch (error) {
         console.error('Error logging in:', error);
@@ -387,7 +307,7 @@ app.post('/api/logout', (req, res) => {
             console.error('Error destroying session:', err);
             return res.status(500).json({ error: 'Failed to logout' });
         }
-        res.json({ success: true });
+    res.json({ success: true });
     });
 });
 

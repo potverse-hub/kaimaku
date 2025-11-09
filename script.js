@@ -960,7 +960,7 @@ async function playTheme({ anime, theme }) {
     if (songInfo) {
         themeInfo.innerHTML = `OP${opNumber}${slugToShow}<br><span class="song-info">${songInfo}</span>`;
     } else {
-        themeInfo.textContent = `OP${opNumber}${slugToShow}`;
+    themeInfo.textContent = `OP${opNumber}${slugToShow}`;
     }
     
     // Display anime info
@@ -997,10 +997,10 @@ async function playTheme({ anime, theme }) {
                 
                 // Wait until we have minimum buffer
                 if (bufferAhead >= MIN_BUFFER_AHEAD || bufferedEnd >= videoPlayer.duration * 0.95) {
-                    overlay.classList.remove('loading');
+            overlay.classList.remove('loading');
                     isWaitingForBuffer = false;
-                    setupCustomControls();
-                    videoPlayer.setAttribute('data-controls-setup', 'true');
+                setupCustomControls();
+                videoPlayer.setAttribute('data-controls-setup', 'true');
                     // Auto-play if user hasn't paused
                     if (!videoPlayer.paused && videoPlayer.currentTime === 0) {
                         videoPlayer.play().catch(err => console.log('Auto-play prevented:', err));
@@ -1065,7 +1065,7 @@ async function playTheme({ anime, theme }) {
                 const bufferedEnd = videoPlayer.buffered.end(videoPlayer.buffered.length - 1);
                 const bufferAhead = bufferedEnd - videoPlayer.currentTime;
                 if (bufferAhead >= 2) {
-                    overlay.classList.remove('loading');
+            overlay.classList.remove('loading');
                     isWaitingForBuffer = false;
                 }
             }
@@ -1236,7 +1236,7 @@ function findBestVideo(theme) {
         // If sizes unknown, prefer lower resolution
         if (a.resolution > 0 && b.resolution > 0) {
             return a.resolution - b.resolution;
-        }
+            }
         
         return 0;
     });
@@ -1632,9 +1632,9 @@ async function saveRatingToDatabase(themeId, rating, metadata) {
                 } else {
                     // Actually logged out
                     showNotification('Session expired. Please login again to save ratings');
-                    currentUser = null;
-                    updateAuthUI();
-                    return false;
+            currentUser = null;
+            updateAuthUI();
+            return false;
                 }
             } catch (authError) {
                 // Auth check failed, assume we're still logged in but there was an error
