@@ -22,21 +22,6 @@ if (process.env.NODE_ENV === 'production' && process.env.RENDER_EXTERNAL_URL) {
     allowedOrigins.push(process.env.RENDER_EXTERNAL_URL);
 }
 
-// Add Vercel URL automatically if in production
-if (process.env.NODE_ENV === 'production' && process.env.VERCEL_URL) {
-    allowedOrigins.push(`https://${process.env.VERCEL_URL}`);
-}
-if (process.env.NODE_ENV === 'production' && process.env.VERCEL) {
-    // Allow Vercel preview and production URLs
-    if (process.env.VERCEL_URL) {
-        allowedOrigins.push(`https://${process.env.VERCEL_URL}`);
-    }
-    // Production domain (if set via Vercel environment variable)
-    if (process.env.PRODUCTION_URL) {
-        allowedOrigins.push(process.env.PRODUCTION_URL);
-    }
-}
-
 app.use(cors({
     origin: function (origin, callback) {
         // Allow requests with no origin (mobile apps, curl, etc.)
@@ -67,10 +52,10 @@ const sessionConfig = {
     rolling: true, // Reset expiration on every request to keep session alive
     name: 'kaimaku.sid', // Custom session name
     cookie: { 
-        secure: process.env.NODE_ENV === 'production', // HTTPS in production (Render/Vercel use HTTPS)
+        secure: process.env.NODE_ENV === 'production', // HTTPS in production (Render uses HTTPS)
         httpOnly: true,
         maxAge: 24 * 60 * 60 * 1000, // 24 hours
-        sameSite: process.env.VERCEL ? 'none' : 'lax', // 'none' for Vercel (cross-domain), 'lax' for same-domain
+        sameSite: 'lax', // 'lax' works for same-site requests (frontend and backend on same domain)
         path: '/' // Ensure cookie is available for all paths
         // Don't set domain - let browser handle it automatically
     }
@@ -304,40 +289,7 @@ app.get('/api/proxy/animethemes/*', async (req, res) => {
 });
 
 // Serve static files (HTML, CSS, JS)
-if (!process.env.VERCEL) {
-    // Traditional server: serve all static files via Express
-    app.use(express.static(__dirname));
-} else {
-    // Vercel: static files are served automatically by Vercel from root directory
-    // Only serve index.html for non-API, non-static routes (client-side routing)
-    const path = require('path');
-    
-    // Serve index.html for root and other non-API routes
-    // Static files (CSS, JS, images) are handled by Vercel's routing
-    app.get('/', (req, res) => {
-        res.sendFile(path.join(__dirname, 'index.html'));
-    });
-    
-    // For any other non-API route, also serve index.html (for client-side routing)
-    // This handles hash-based routing (#home, etc.)
-    app.get('*', (req, res, next) => {
-        // Don't handle API routes - they should be handled by the API handlers above
-        if (req.path.startsWith('/api/')) {
-            return next();
-        }
-        
-        // Don't handle static files - Vercel serves them automatically
-        const staticExtensions = ['.css', '.js', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.json', '.woff', '.woff2', '.ttf', '.eot', '.html'];
-        if (staticExtensions.some(ext => req.path.endsWith(ext))) {
-            // Return 404 for static files that Vercel should serve
-            // If we get here, it means Vercel didn't serve it, so it doesn't exist
-            return res.status(404).json({ error: 'File not found' });
-        }
-        
-        // For all other routes, serve index.html (SPA routing)
-        res.sendFile(path.join(__dirname, 'index.html'));
-    });
-}
+app.use(express.static(__dirname));
 
 // Seeded random function (same as client)
 function seededRandom(seed) {
@@ -580,42 +532,26 @@ app.post('/api/ratings', async (req, res) => {
     }
 });
 
-// Always export the app (for Vercel serverless functions)
-// This allows the app to be imported by api/index.js on Vercel
-module.exports = app;
+// Start server immediately, initialize database in background
+// This ensures Render detects the port quickly
+const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`\n✅ Server running on port ${PORT}`);
+    console.log(`🌐 Server is ready to accept connections\n`);
+    console.log(`📊 Session store: ${sessionConfig.store ? 'PostgreSQL' : 'MemoryStore'}\n`);
+    
+    // Initialize database in background (non-blocking)
+    initializeDatabaseInBackground();
+});
 
-// Start server only if not running on Vercel
-// Vercel uses serverless functions and doesn't need a listening server
-if (!process.env.VERCEL) {
-    // Traditional server (Render, local development, etc.)
-    // Start server immediately, initialize database in background
-    // This ensures Render detects the port quickly
-    const server = app.listen(PORT, '0.0.0.0', () => {
-        console.log(`\n✅ Server running on port ${PORT}`);
-        console.log(`🌐 Server is ready to accept connections\n`);
-        console.log(`📊 Session store: ${sessionConfig.store ? 'PostgreSQL' : 'MemoryStore'}\n`);
-        
-        // Initialize database in background (non-blocking)
-        initializeDatabaseInBackground();
-    });
-
-    // Handle server errors
-    server.on('error', (error) => {
-        if (error.code === 'EADDRINUSE') {
-            console.error(`❌ Port ${PORT} is already in use`);
-        } else {
-            console.error('❌ Server error:', error);
-        }
-        process.exit(1);
-    });
-} else {
-    // Vercel serverless function - initialize database on cold start
-    // Note: This runs on cold start, connection pooling is handled by pg
-    // Database initialization is non-blocking for serverless functions
-    initializeDatabaseInBackground().catch(err => {
-        console.error('Database initialization error (non-blocking):', err.message);
-    });
-}
+// Handle server errors
+server.on('error', (error) => {
+    if (error.code === 'EADDRINUSE') {
+        console.error(`❌ Port ${PORT} is already in use`);
+    } else {
+        console.error('❌ Server error:', error);
+    }
+    process.exit(1);
+});
 
 // Initialize database in background
 async function initializeDatabaseInBackground() {
