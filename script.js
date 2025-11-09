@@ -153,7 +153,18 @@ function setupEventListeners() {
     // Home page search (only via Enter key now, filter button replaced search button)
     if (searchInput) {
         searchInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') handleSearch();
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                handleSearch();
+            }
+        });
+        
+        // Also support mobile keyboard "Go" button
+        searchInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                handleSearch();
+            }
         });
     }
     
