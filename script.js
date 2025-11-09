@@ -399,48 +399,78 @@ async function fetchWithFallback(url, options = {}) {
     try {
         const response = await fetch(url, options);
         
-        // On mobile, never try direct API fallback (will always fail with CORS)
-        if (isMobile) {
-            return response;
+        // Check if proxy returned a Cloudflare block error
+        const isCloudflareBlock = response.status === 403 || response.status === 503;
+        
+        // If proxy is blocked by Cloudflare, try direct API (even on mobile - CORS might work)
+        if (isCloudflareBlock && API_BASE !== API_DIRECT && url.includes(API_BASE)) {
+            // Check if it's actually a Cloudflare block by reading the response
+            try {
+                const responseText = await response.clone().text();
+                if (responseText.includes('Just a moment') || responseText.includes('cf-browser-verification')) {
+                    console.warn(`[Proxy] Cloudflare block detected (${response.status}), trying direct API as fallback...`);
+                    const directUrl = url.replace(API_BASE, API_DIRECT);
+                    console.log(`[Fallback] Trying direct API:`, directUrl);
+                    
+                    try {
+                        const directResponse = await fetch(directUrl, options);
+                        if (directResponse.ok) {
+                            console.log(`[Fallback] ✓ Direct API worked!`);
+                            useDirectAPI = true; // Remember to use direct API for future requests
+                            return directResponse;
+                        } else {
+                            console.warn(`[Fallback] Direct API returned ${directResponse.status}`);
+                            // Return the original proxy error if direct API also fails
+                            return response;
+                        }
+                    } catch (directError) {
+                        console.error(`[Fallback] Direct API error:`, directError.message);
+                        // If direct API fails (CORS or other), return original proxy error
+                        return response;
+                    }
+                }
+            } catch (e) {
+                // Couldn't read response, continue with normal handling
+                console.warn(`[Fallback] Could not check response:`, e.message);
+            }
         }
         
-        // If proxy returns 403, try direct API (only on desktop, only in production)
+        // If proxy returns 403 but not Cloudflare block, try direct API on desktop only
         if (response.status === 403 && API_BASE !== API_DIRECT && url.includes(API_BASE) && !isMobile) {
             console.warn(`[Proxy] Received 403, trying direct API as fallback...`);
             const directUrl = url.replace(API_BASE, API_DIRECT);
-            console.log(`[Fallback] Trying direct API:`, directUrl);
             
             try {
                 const directResponse = await fetch(directUrl, options);
                 if (directResponse.ok) {
                     console.log(`[Fallback] ✓ Direct API worked!`);
-                    useDirectAPI = true; // Remember to use direct API for future requests
+                    useDirectAPI = true;
                     return directResponse;
-                } else if (directResponse.status === 0 || directResponse.status >= 500) {
-                    // CORS error or server error - proxy might be needed but is blocked
-                    console.error(`[Fallback] Direct API failed with status ${directResponse.status} (likely CORS)`);
                 }
             } catch (directError) {
                 console.error(`[Fallback] Direct API error:`, directError.message);
-                // If direct API fails due to CORS, we're stuck - return original 403
             }
         }
         
         return response;
     } catch (error) {
-        // On mobile, never try direct API fallback
-        if (isMobile) {
-            throw error;
-        }
-        
-        // If proxy fails and we're in production (and not mobile), try direct API
-        if (API_BASE !== API_DIRECT && url.includes(API_BASE) && error.message.includes('Failed to fetch') && !isMobile) {
-            console.warn(`[Proxy] Request failed, trying direct API as fallback...`);
+        // If proxy fails completely, try direct API (even on mobile)
+        if (API_BASE !== API_DIRECT && url.includes(API_BASE) && error.message.includes('Failed to fetch')) {
+            console.warn(`[Proxy] Request failed (${error.message}), trying direct API as fallback...`);
             const directUrl = url.replace(API_BASE, API_DIRECT);
             try {
-                return await fetch(directUrl, options);
+                const directResponse = await fetch(directUrl, options);
+                if (directResponse.ok) {
+                    console.log(`[Fallback] ✓ Direct API worked after proxy failure!`);
+                    useDirectAPI = true;
+                    return directResponse;
+                }
             } catch (directError) {
                 console.error(`[Fallback] Direct API also failed:`, directError.message);
+                // If it's a CORS error, provide a helpful message
+                if (directError.message.includes('CORS') || directError.message.includes('Failed to fetch')) {
+                    throw new Error('Cannot connect to API. The proxy is blocked by Cloudflare and direct API access is blocked by CORS. Please contact the API maintainers.');
+                }
             }
         }
         throw error;
