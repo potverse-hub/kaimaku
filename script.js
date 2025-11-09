@@ -2028,10 +2028,18 @@ async function loadFeaturedOpenings() {
         // Try using the animeyear endpoint first (returns grouped by season)
         // Include images for preview backgrounds
         let url = `${API_BASE}/animeyear/${year}?include=animethemes.animethemeentries.videos,animethemes.song,animethemes.song.artists,animesynonyms,images`;
+        
+        // Add timeout for mobile networks
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout
+        
         let response = await fetch(url, {
             method: 'GET',
             headers: { 'Accept': 'application/json' },
+            signal: controller.signal
         });
+        
+        clearTimeout(timeoutId);
         
         let processedAnime = [];
         
