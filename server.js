@@ -210,12 +210,31 @@ app.post('/api/login', async (req, res) => {
         }
         
         req.session.userId = username;
+        
+        // Log cookie settings for debugging
+        console.log('Login - Setting session cookie:', {
+            secure: sessionConfig.cookie.secure,
+            sameSite: sessionConfig.cookie.sameSite,
+            httpOnly: sessionConfig.cookie.httpOnly,
+            maxAge: sessionConfig.cookie.maxAge,
+            sessionId: req.sessionID
+        });
+        
         // Save session explicitly to ensure it's persisted
         req.session.save((err) => {
             if (err) {
                 console.error('Error saving session:', err);
                 return res.status(500).json({ error: 'Failed to save session' });
             }
+            
+            // Log response headers to verify cookie is being set
+            const setCookieHeader = res.getHeader('Set-Cookie');
+            console.log('Login - Response Set-Cookie header:', setCookieHeader ? 'present' : 'missing');
+            if (setCookieHeader) {
+                const cookieStr = Array.isArray(setCookieHeader) ? setCookieHeader[0] : setCookieHeader;
+                console.log('Login - Cookie value:', cookieStr.substring(0, 100) + '...');
+            }
+            
             res.json({ success: true, username });
         });
     } catch (error) {
