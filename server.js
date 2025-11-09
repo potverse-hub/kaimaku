@@ -1,15 +1,12 @@
-// Simple Node.js server for storing ratings in a local JSON file
+// Node.js server with PostgreSQL database
 const express = require('express');
-const fs = require('fs').promises;
-const path = require('path');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const session = require('express-session');
+const db = require('./database');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const DATA_FILE = path.join(__dirname, 'ratings.json');
-const USERS_FILE = path.join(__dirname, 'users.json');
 
 // Middleware
 const allowedOrigins = process.env.ALLOWED_ORIGINS 
@@ -43,34 +40,6 @@ app.use(session({
 
 // Serve static files (HTML, CSS, JS)
 app.use(express.static(__dirname));
-
-// Initialize data files if they don't exist
-async function initializeDataFile() {
-    try {
-        await fs.access(DATA_FILE);
-    } catch {
-        const initialData = {
-            ratings: {},
-            themeRatings: {},
-            lastUpdated: Date.now()
-        };
-        await fs.writeFile(DATA_FILE, JSON.stringify(initialData, null, 2));
-        console.log('Created ratings.json');
-    }
-}
-
-async function initializeUsersFile() {
-    try {
-        await fs.access(USERS_FILE);
-    } catch {
-        const initialData = {
-            users: {},
-            lastUpdated: Date.now()
-        };
-        await fs.writeFile(USERS_FILE, JSON.stringify(initialData, null, 2));
-        console.log('Created users.json');
-    }
-}
 
 // Seeded random function (same as client)
 function seededRandom(seed) {
@@ -138,21 +107,14 @@ app.post('/api/register', async (req, res) => {
             return res.status(400).json({ error: 'CAPTCHA verification failed' });
         }
         
-        const usersData = JSON.parse(await fs.readFile(USERS_FILE, 'utf8'));
-        
-        if (usersData.users[username]) {
+        // Check if user already exists
+        const existingUser = await db.getUser(username);
+        if (existingUser) {
             return res.status(400).json({ error: 'Username already exists' });
         }
         
         const hashedPassword = await bcrypt.hash(password, 10);
-        usersData.users[username] = {
-            username,
-            password: hashedPassword,
-            createdAt: Date.now()
-        };
-        usersData.lastUpdated = Date.now();
-        
-        await fs.writeFile(USERS_FILE, JSON.stringify(usersData, null, 2));
+        await db.createUser(username, hashedPassword);
         
         req.session.userId = username;
         res.json({ success: true, username });
@@ -170,14 +132,13 @@ app.post('/api/login', async (req, res) => {
             return res.status(400).json({ error: 'Username and password required' });
         }
         
-        const usersData = JSON.parse(await fs.readFile(USERS_FILE, 'utf8'));
-        const user = usersData.users[username];
+        const user = await db.getUser(username);
         
         if (!user) {
             return res.status(401).json({ error: 'Invalid username or password' });
         }
         
-        const validPassword = await bcrypt.compare(password, user.password);
+        const validPassword = await bcrypt.compare(password, user.password_hash);
         if (!validPassword) {
             return res.status(401).json({ error: 'Invalid username or password' });
         }
@@ -206,9 +167,8 @@ app.get('/api/me', (req, res) => {
 // Get all ratings
 app.get('/api/ratings', async (req, res) => {
     try {
-        const data = await fs.readFile(DATA_FILE, 'utf8');
-        const json = JSON.parse(data);
-        res.json(json);
+        const data = await db.getRatings();
+        res.json(data);
     } catch (error) {
         console.error('Error reading ratings:', error);
         res.status(500).json({ error: 'Failed to read ratings' });
@@ -223,54 +183,15 @@ app.post('/api/ratings', async (req, res) => {
         }
         
         const { themeId, rating, metadata } = req.body;
-        const userId = req.session.userId; // Use authenticated username as userId
+        const userId = req.session.userId;
         
         if (!themeId || rating === undefined) {
             return res.status(400).json({ error: 'Missing required fields' });
         }
         
-        // Read current data
-        const data = JSON.parse(await fs.readFile(DATA_FILE, 'utf8'));
+        const themeRating = await db.saveRating(themeId, userId, rating, metadata);
         
-        if (!data.ratings) data.ratings = {};
-        if (!data.themeRatings) data.themeRatings = {};
-        
-        const userRatingKey = `${themeId}_${userId}`;
-        
-        // Save/update user rating
-        data.ratings[userRatingKey] = {
-            themeId: themeId,
-            rating: rating,
-            userId: userId,
-            timestamp: Date.now(),
-            animeName: metadata?.animeName || null,
-            animeSlug: metadata?.animeSlug || null,
-            themeSequence: metadata?.themeSequence || null
-        };
-        
-        // Calculate aggregated rating for this theme
-        const themeRatings = Object.values(data.ratings).filter(r => r.themeId === themeId);
-        const total = themeRatings.reduce((sum, r) => sum + r.rating, 0);
-        const count = themeRatings.length;
-        const average = count > 0 ? total / count : 0;
-        
-        // Update aggregated rating
-        data.themeRatings[themeId] = {
-            themeId: themeId,
-            count: count,
-            average: average,
-            animeName: metadata?.animeName || null,
-            animeSlug: metadata?.animeSlug || null,
-            themeSequence: metadata?.themeSequence || null,
-            lastUpdated: Date.now()
-        };
-        
-        data.lastUpdated = Date.now();
-        
-        // Save updated data
-        await fs.writeFile(DATA_FILE, JSON.stringify(data, null, 2));
-        
-        res.json({ success: true, themeRating: data.themeRatings[themeId] });
+        res.json({ success: true, themeRating });
     } catch (error) {
         console.error('Error saving rating:', error);
         res.status(500).json({ error: 'Failed to save rating' });
@@ -279,14 +200,24 @@ app.post('/api/ratings', async (req, res) => {
 
 // Start server
 async function startServer() {
-    await initializeDataFile();
-    await initializeUsersFile();
-    app.listen(PORT, () => {
-        console.log(`\n✅ Server running at http://localhost:${PORT}`);
-        console.log(`📁 Ratings stored in: ${DATA_FILE}`);
-        console.log(`👤 Users stored in: ${USERS_FILE}`);
-        console.log(`\n💡 Make sure to open http://localhost:${PORT} in your browser\n`);
-    });
+    try {
+        // Initialize database tables
+        const dbInitialized = await db.initializeDatabase();
+        if (!dbInitialized) {
+            console.error('⚠️  Failed to initialize database. Make sure DATABASE_URL is set.');
+            console.error('💡 For local development, you can use file storage by setting USE_FILE_STORAGE=true');
+            process.exit(1);
+        }
+        
+        app.listen(PORT, () => {
+            console.log(`\n✅ Server running at http://localhost:${PORT}`);
+            console.log(`🗄️  Database: PostgreSQL`);
+            console.log(`\n💡 Make sure to open http://localhost:${PORT} in your browser\n`);
+        });
+    } catch (error) {
+        console.error('❌ Failed to start server:', error);
+        process.exit(1);
+    }
 }
 
 startServer().catch(console.error);
