@@ -215,46 +215,51 @@ app.post('/api/ratings', async (req, res) => {
     }
 });
 
-// Start server
-async function startServer() {
-    try {
-        // Initialize database tables
-        console.log('🔄 Initializing database...');
-        const dbInitialized = await db.initializeDatabase();
-        if (!dbInitialized) {
-            console.error('⚠️  Failed to initialize database. Make sure DATABASE_URL is set.');
-            console.error('💡 For local development, you can use file storage by setting USE_FILE_STORAGE=true');
-            process.exit(1);
-        }
-        console.log('✅ Database initialized successfully');
-        
-        // Start server - bind to 0.0.0.0 to allow external connections (required for Render)
-        const server = app.listen(PORT, '0.0.0.0', () => {
-            console.log(`\n✅ Server running on port ${PORT}`);
-            console.log(`🗄️  Database: PostgreSQL`);
-            console.log(`🌐 Server is ready to accept connections\n`);
-        });
-        
-        // Handle server errors
-        server.on('error', (error) => {
-            if (error.code === 'EADDRINUSE') {
-                console.error(`❌ Port ${PORT} is already in use`);
-            } else {
-                console.error('❌ Server error:', error);
-            }
-            process.exit(1);
-        });
-        
-    } catch (error) {
-        console.error('❌ Failed to start server:', error);
-        console.error('Error details:', error.message);
-        console.error('Stack:', error.stack);
-        process.exit(1);
-    }
-}
+// Start server immediately, initialize database in background
+// This ensures Render detects the port quickly
+const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`\n✅ Server running on port ${PORT}`);
+    console.log(`🌐 Server is ready to accept connections\n`);
+    
+    // Initialize database in background (non-blocking)
+    initializeDatabaseInBackground();
+});
 
-// Start the server
-startServer().catch((error) => {
-    console.error('❌ Unhandled error starting server:', error);
+// Handle server errors
+server.on('error', (error) => {
+    if (error.code === 'EADDRINUSE') {
+        console.error(`❌ Port ${PORT} is already in use`);
+    } else {
+        console.error('❌ Server error:', error);
+    }
     process.exit(1);
 });
+
+// Initialize database in background
+async function initializeDatabaseInBackground() {
+    try {
+        console.log('🔄 Initializing database...');
+        
+        // Set a timeout for database connection (30 seconds)
+        const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Database connection timeout')), 30000)
+        );
+        
+        const dbInitPromise = db.initializeDatabase();
+        const dbInitialized = await Promise.race([dbInitPromise, timeoutPromise]);
+        
+        if (dbInitialized) {
+            console.log('✅ Database initialized successfully');
+            console.log('🗄️  Database: PostgreSQL');
+        } else {
+            console.warn('⚠️  Database initialization returned false');
+        }
+    } catch (error) {
+        console.error('⚠️  Database initialization failed:', error.message);
+        console.error('💡 Server will continue but database features may not work');
+        console.error('💡 Check your DATABASE_URL environment variable');
+        console.error('💡 Error details:', error.message);
+        // Don't exit - let server continue running
+        // Database might connect later, or we can retry
+    }
+}

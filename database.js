@@ -10,7 +10,10 @@ if (!process.env.DATABASE_URL) {
 
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+    connectionTimeoutMillis: 10000, // 10 second timeout
+    idleTimeoutMillis: 30000,
+    max: 20 // Maximum number of clients in the pool
 });
 
 // Test connection
