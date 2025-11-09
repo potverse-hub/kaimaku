@@ -416,6 +416,8 @@ body.light-theme .navbar {
 .btn-primary:active {
     transform: translateY(0);
 }
+
+.btn-primary:hover {
     background: rgba(0, 212, 255, 0.1);
     transform: translateY(-2px);
     box-shadow: 0 4px 16px rgba(0, 212, 255, 0.2);
