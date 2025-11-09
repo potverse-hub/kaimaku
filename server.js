@@ -107,19 +107,47 @@ app.get('/api/proxy/animethemes/*', async (req, res) => {
         
         console.log(`Proxying request to: ${fullUrl}`);
         
-        const response = await fetch(fullUrl, {
+        // Use Node.js built-in http/https modules
+        const https = require('https');
+        const http = require('http');
+        const url = require('url');
+        
+        const parsedUrl = new URL(fullUrl);
+        const options = {
+            hostname: parsedUrl.hostname,
+            path: parsedUrl.pathname + parsedUrl.search,
             method: 'GET',
             headers: {
                 'Accept': 'application/json',
                 'User-Agent': 'Kaimaku/1.0'
             }
+        };
+        
+        const requestModule = parsedUrl.protocol === 'https:' ? https : http;
+        
+        const proxyResponse = await new Promise((resolve, reject) => {
+            const req = requestModule.request(options, (res) => {
+                let data = '';
+                res.on('data', (chunk) => {
+                    data += chunk;
+                });
+                res.on('end', () => {
+                    resolve({ status: res.statusCode, data: data });
+                });
+            });
+            
+            req.on('error', (error) => {
+                reject(error);
+            });
+            
+            req.end();
         });
         
-        if (!response.ok) {
-            return res.status(response.status).json({ error: `API returned ${response.status}` });
+        if (proxyResponse.status !== 200) {
+            return res.status(proxyResponse.status).json({ error: `API returned ${proxyResponse.status}` });
         }
         
-        const data = await response.json();
+        const data = JSON.parse(proxyResponse.data);
         res.json(data);
     } catch (error) {
         console.error('Proxy error:', error);
