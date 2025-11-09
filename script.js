@@ -97,6 +97,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Load public ratings from database
     if (databaseInitialized) {
         loadPublicRatings();
+    } else {
+        // Retry loading public ratings after a delay if database wasn't ready
+        setTimeout(() => {
+            if (databaseInitialized) {
+                loadPublicRatings();
+            }
+        }, 2000);
     }
     
     // Setup home button navigation
@@ -1619,10 +1626,12 @@ async function saveRatingToDatabase(themeId, rating, metadata) {
 // Load public ratings from database
 async function loadPublicRatings() {
     if (!databaseInitialized) {
+        console.warn('⚠️ Database not initialized, cannot load public ratings');
         return;
     }
     
     try {
+        console.log('🔄 Loading public ratings from database...');
         const response = await fetch(`${API_BASE_URL}/ratings`, {
             method: 'GET',
             credentials: 'include',
@@ -1632,18 +1641,20 @@ async function loadPublicRatings() {
         });
         
         if (!response.ok) {
-            throw new Error('Failed to fetch ratings');
+            throw new Error(`Failed to fetch ratings: ${response.status}`);
         }
         
         const data = await response.json();
         publicRatings = data.themeRatings || {};
+        
+        console.log(`✅ Loaded ${Object.keys(publicRatings).length} public ratings`);
         
         // Update leaderboard with public ratings
         loadLeaderboard();
         // Reload featured openings to show updated ratings
         loadFeaturedOpenings();
     } catch (error) {
-        console.error('Error loading public ratings:', error);
+        console.error('❌ Error loading public ratings:', error);
     }
 }
 
@@ -1697,15 +1708,19 @@ function handleRating(rating) {
     themeMetadata[themeId] = metadata;
     localStorage.setItem('themeMetadata', JSON.stringify(themeMetadata));
     
-    // Save to Firebase database (public)
+    // Save to database (public)
     saveRatingToDatabase(themeId, newRating, metadata).then(success => {
         if (success) {
-            console.log('Rating saved to public database');
-            // Reload public ratings after a short delay
+            console.log('✅ Rating saved to database');
+            // Reload public ratings after a short delay to update leaderboard
             setTimeout(() => {
                 loadPublicRatings();
-            }, 1000);
+            }, 500);
+        } else {
+            console.warn('⚠️ Failed to save rating to database');
         }
+    }).catch(error => {
+        console.error('❌ Error saving rating to database:', error);
     });
     
     const ratingSlider = document.getElementById('ratingSlider');
@@ -2437,6 +2452,34 @@ function createFeaturedCarousel(items, container) {
         e.stopPropagation();
         nextSlide();
     };
+    
+    // Touch support for mobile
+    let touchStartX = 0;
+    let touchEndX = 0;
+    const minSwipeDistance = 50; // Minimum distance for swipe
+    
+    carousel.addEventListener('touchstart', (e) => {
+        touchStartX = e.changedTouches[0].screenX;
+        stopAutoscroll();
+    }, { passive: true });
+    
+    carousel.addEventListener('touchend', (e) => {
+        touchEndX = e.changedTouches[0].screenX;
+        const swipeDistance = touchStartX - touchEndX;
+        
+        if (Math.abs(swipeDistance) > minSwipeDistance && !isTransitioning) {
+            if (swipeDistance > 0) {
+                // Swipe left - go to next
+                nextSlide();
+            } else {
+                // Swipe right - go to previous
+                prevSlide();
+            }
+            setTimeout(startAutoscroll, AUTOSCROLL_DELAY);
+        } else {
+            startAutoscroll();
+        }
+    }, { passive: true });
     
     // Keyboard navigation (only when carousel is visible)
     const handleKeydown = (e) => {
