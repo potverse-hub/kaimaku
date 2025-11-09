@@ -98,19 +98,36 @@ app.use((req, res, next) => {
 });
 
 // API Proxy endpoint to avoid CORS issues
-app.get('/api/proxy/animethemes/*', async (req, res) => {
+// Use app.use to catch all paths under /api/proxy/animethemes
+app.use('/api/proxy/animethemes', async (req, res, next) => {
+    // Only handle GET requests for the proxy
+    if (req.method !== 'GET') {
+        return next();
+    }
+    
     try {
-        // Get the path after /api/proxy/animethemes/
-        const apiPath = req.path.replace('/api/proxy/animethemes', '');
-        const queryString = req.url.split('?')[1] || '';
-        const fullUrl = `https://api.animethemes.moe${apiPath}${queryString ? '?' + queryString : ''}`;
+        // When using app.use, Express strips the mount point from req.path
+        // So req.path will be like /search/ or /animeyear/2025
+        // req.url contains the path + query string (also stripped)
+        // req.originalUrl contains the full original URL including mount point
         
-        console.log(`Proxying request to: ${fullUrl}`);
+        // Use req.url which has the path and query string (mount point already stripped by Express)
+        const apiPathWithQuery = req.url || req.path;
+        
+        // Split path and query
+        const [apiPath, ...queryParts] = apiPathWithQuery.split('?');
+        const queryString = queryParts.length > 0 ? queryParts.join('?') : '';
+        
+        // Ensure path starts with /
+        const cleanApiPath = apiPath.startsWith('/') ? apiPath : '/' + apiPath;
+        
+        const fullUrl = `https://api.animethemes.moe${cleanApiPath}${queryString ? '?' + queryString : ''}`;
+        
+        console.log(`[PROXY] ${req.method} ${req.originalUrl || req.url} -> ${fullUrl}`);
         
         // Use Node.js built-in http/https modules
         const https = require('https');
         const http = require('http');
-        const url = require('url');
         
         const parsedUrl = new URL(fullUrl);
         const options = {
@@ -120,38 +137,70 @@ app.get('/api/proxy/animethemes/*', async (req, res) => {
             headers: {
                 'Accept': 'application/json',
                 'User-Agent': 'Kaimaku/1.0'
-            }
+            },
+            timeout: 30000 // 30 second timeout
         };
         
         const requestModule = parsedUrl.protocol === 'https:' ? https : http;
         
         const proxyResponse = await new Promise((resolve, reject) => {
-            const req = requestModule.request(options, (res) => {
+            const proxyReq = requestModule.request(options, (proxyRes) => {
                 let data = '';
-                res.on('data', (chunk) => {
+                
+                proxyRes.on('data', (chunk) => {
                     data += chunk;
                 });
-                res.on('end', () => {
-                    resolve({ status: res.statusCode, data: data });
+                
+                proxyRes.on('end', () => {
+                    resolve({ 
+                        status: proxyRes.statusCode, 
+                        data: data,
+                        headers: proxyRes.headers
+                    });
                 });
             });
             
-            req.on('error', (error) => {
+            proxyReq.on('error', (error) => {
+                console.error('[PROXY] Request error:', error);
                 reject(error);
             });
             
-            req.end();
+            proxyReq.on('timeout', () => {
+                proxyReq.destroy();
+                reject(new Error('Request timeout'));
+            });
+            
+            proxyReq.setTimeout(30000);
+            proxyReq.end();
         });
         
+        // Forward response status and headers
         if (proxyResponse.status !== 200) {
-            return res.status(proxyResponse.status).json({ error: `API returned ${proxyResponse.status}` });
+            console.error(`[PROXY] API returned ${proxyResponse.status} for ${fullUrl}`);
+            return res.status(proxyResponse.status).json({ 
+                error: `API returned ${proxyResponse.status}`,
+                url: fullUrl
+            });
         }
         
-        const data = JSON.parse(proxyResponse.data);
-        res.json(data);
+        // Parse and return JSON data
+        try {
+            const data = JSON.parse(proxyResponse.data);
+            res.json(data);
+        } catch (parseError) {
+            console.error('[PROXY] JSON parse error:', parseError);
+            res.status(500).json({ 
+                error: 'Failed to parse API response',
+                message: parseError.message
+            });
+        }
     } catch (error) {
-        console.error('Proxy error:', error);
-        res.status(500).json({ error: 'Failed to proxy request', message: error.message });
+        console.error('[PROXY] Error:', error);
+        res.status(500).json({ 
+            error: 'Failed to proxy request', 
+            message: error.message,
+            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
     }
 });
 
