@@ -101,16 +101,22 @@ app.use((req, res, next) => {
 app.get('/api/proxy/animethemes/*', async (req, res) => {
     try {
         // Get the path after /api/proxy/animethemes/
-        const apiPath = req.path.replace('/api/proxy/animethemes', '');
-        const queryString = req.url.split('?')[1] || '';
+        // req.path will be like '/api/proxy/animethemes/animeyear/2025?include=...'
+        // We need to extract everything after '/api/proxy/animethemes'
+        let apiPath = req.path;
+        if (apiPath.startsWith('/api/proxy/animethemes')) {
+            apiPath = apiPath.substring('/api/proxy/animethemes'.length);
+        }
+        
+        // Get query string from original URL
+        const queryString = req.url.includes('?') ? req.url.split('?').slice(1).join('?') : '';
         const fullUrl = `https://api.animethemes.moe${apiPath}${queryString ? '?' + queryString : ''}`;
         
-        console.log(`Proxying request to: ${fullUrl}`);
+        console.log(`Proxying request: ${req.path} -> ${fullUrl}`);
         
         // Use Node.js built-in http/https modules
         const https = require('https');
         const http = require('http');
-        const url = require('url');
         
         const parsedUrl = new URL(fullUrl);
         const options = {
@@ -132,7 +138,7 @@ app.get('/api/proxy/animethemes/*', async (req, res) => {
                     data += chunk;
                 });
                 res.on('end', () => {
-                    resolve({ status: res.statusCode, data: data });
+                    resolve({ status: res.statusCode, data: data, headers: res.headers });
                 });
             });
             
@@ -140,10 +146,17 @@ app.get('/api/proxy/animethemes/*', async (req, res) => {
                 reject(error);
             });
             
+            // Set timeout
+            req.setTimeout(20000, () => {
+                req.destroy();
+                reject(new Error('Request timeout'));
+            });
+            
             req.end();
         });
         
         if (proxyResponse.status !== 200) {
+            console.error(`Proxy error: API returned ${proxyResponse.status}`);
             return res.status(proxyResponse.status).json({ error: `API returned ${proxyResponse.status}` });
         }
         
