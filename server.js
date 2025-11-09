@@ -105,20 +105,33 @@ app.use('/api/proxy/animethemes', async (req, res, next) => {
         return next();
     }
     try {
-        // With app.use('/api/proxy/animethemes', ...), req.path is already stripped
-        // So req.path will be like '/animeyear/2025' or just '/'
+        // Extract path from req.url (includes query string)
+        // req.url will be like '/animeyear/2025?include=...' (path is already stripped by app.use)
+        // Or use req.originalUrl and strip the prefix manually
         let apiPath = req.path || '/';
+        
+        // If path is empty or just '/', check originalUrl
+        if (!apiPath || apiPath === '/' || apiPath === '') {
+            // Try to extract from originalUrl
+            const originalPath = req.originalUrl || req.url;
+            if (originalPath.startsWith('/api/proxy/animethemes')) {
+                apiPath = originalPath.substring('/api/proxy/animethemes'.length);
+            }
+        }
         
         // Ensure it starts with /
         if (!apiPath.startsWith('/')) {
             apiPath = '/' + apiPath;
         }
         
-        // Get query string from original URL
-        const queryString = req.url.includes('?') ? req.url.split('?').slice(1).join('?') : '';
+        // Get query string from req.url (already includes query if present)
+        const urlParts = (req.url || '').split('?');
+        const queryString = urlParts.length > 1 ? urlParts.slice(1).join('?') : '';
+        
+        // Build full URL
         const fullUrl = `https://api.animethemes.moe${apiPath}${queryString ? '?' + queryString : ''}`;
         
-        console.log(`Proxying request: ${req.path} -> ${fullUrl}`);
+        console.log(`Proxying request: originalUrl=${req.originalUrl}, path=${req.path}, url=${req.url} -> ${fullUrl}`);
         
         // Use Node.js built-in http/https modules
         const https = require('https');
