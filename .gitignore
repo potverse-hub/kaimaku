@@ -1,0 +1,16 @@
+node_modules/
+ratings.json
+users.json
+.env
+.env.local
+.DS_Store
+*.log
+animethemes-api-docs-main/
+*.md
+!README.md
+test-*.js
+setup-*.js
+*.bat
+netlify.toml
+render.yaml
+api/
