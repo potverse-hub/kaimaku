@@ -97,6 +97,56 @@ app.use((req, res, next) => {
     next();
 });
 
+// Test endpoint to verify API connectivity
+app.get('/api/test-api', async (req, res) => {
+    try {
+        const https = require('https');
+        const testUrl = 'https://api.animethemes.moe/animeyear/2024';
+        
+        console.log(`[TEST] Testing direct API call to: ${testUrl}`);
+        
+        const options = {
+            hostname: 'api.animethemes.moe',
+            path: '/animeyear/2024',
+            method: 'GET',
+            headers: {
+                'Accept': 'application/json',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+        };
+        
+        const response = await new Promise((resolve, reject) => {
+            const req = https.request(options, (res) => {
+                let data = '';
+                res.on('data', (chunk) => { data += chunk; });
+                res.on('end', () => {
+                    resolve({ 
+                        status: res.statusCode, 
+                        data: data,
+                        headers: res.headers,
+                        statusMessage: res.statusMessage
+                    });
+                });
+            });
+            req.on('error', reject);
+            req.setTimeout(10000, () => { req.destroy(); reject(new Error('Timeout')); });
+            req.end();
+        });
+        
+        res.json({
+            success: response.status === 200,
+            status: response.status,
+            statusMessage: response.statusMessage,
+            headers: response.headers,
+            bodyPreview: response.data.substring(0, 500),
+            rateLimitRemaining: response.headers['x-ratelimit-remaining'],
+            rateLimitLimit: response.headers['x-ratelimit-limit']
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message, stack: error.stack });
+    }
+});
+
 // API Proxy endpoint to avoid CORS issues
 // Use app.use to catch all paths under /api/proxy/animethemes
 app.use('/api/proxy/animethemes', async (req, res, next) => {
