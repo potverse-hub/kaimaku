@@ -384,14 +384,38 @@ function processResponse(data, url) {
     return [];
 }
 
+// Detect if we're on a mobile device
+const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+                      (window.matchMedia && window.matchMedia('(max-width: 768px)').matches) ||
+                      ('ontouchstart' in window);
+
+// Log mobile detection for debugging
+if (isMobileDevice) {
+    console.log('[Mobile] Mobile device detected - will ALWAYS use proxy to avoid CORS errors');
+} else {
+    console.log('[Desktop] Desktop device detected - may use direct API if proxy fails');
+}
+
 // Helper function to fetch with proxy fallback to direct API
+// IMPORTANT: On mobile, NEVER use direct API (always use proxy) to avoid CORS errors
 async function fetchWithFallback(url, options = {}) {
     try {
         const response = await fetch(url, options);
         
-        // If proxy returns 403, try direct API (only in production)
-        if (response.status === 403 && API_BASE !== API_DIRECT && url.includes(API_BASE)) {
-            console.warn(`[Proxy] Received 403, trying direct API as fallback...`);
+        // On mobile, NEVER try direct API - it will always cause CORS errors
+        // Always use the proxy on mobile devices
+        if (isMobileDevice) {
+            // On mobile, if proxy fails, return the error - don't try direct API
+            if (!response.ok) {
+                console.error(`[Mobile] Proxy returned ${response.status}. Cannot use direct API due to CORS restrictions.`);
+                return response;
+            }
+            return response;
+        }
+        
+        // Desktop: If proxy returns 403, try direct API as fallback (only on desktop)
+        if (response.status === 403 && API_BASE !== API_DIRECT && url.includes(API_BASE) && !isMobileDevice) {
+            console.warn(`[Proxy] Received 403, trying direct API as fallback (desktop only)...`);
             const directUrl = url.replace(API_BASE, API_DIRECT);
             console.log(`[Fallback] Trying direct API:`, directUrl);
             
@@ -413,9 +437,15 @@ async function fetchWithFallback(url, options = {}) {
         
         return response;
     } catch (error) {
-        // If proxy fails and we're in production, try direct API
-        if (API_BASE !== API_DIRECT && url.includes(API_BASE) && error.message.includes('Failed to fetch')) {
-            console.warn(`[Proxy] Request failed, trying direct API as fallback...`);
+        // On mobile, NEVER try direct API
+        if (isMobileDevice) {
+            console.error(`[Mobile] Proxy request failed: ${error.message}. Cannot use direct API due to CORS.`);
+            throw error;
+        }
+        
+        // Desktop: If proxy fails and we're in production, try direct API
+        if (API_BASE !== API_DIRECT && url.includes(API_BASE) && error.message.includes('Failed to fetch') && !isMobileDevice) {
+            console.warn(`[Proxy] Request failed, trying direct API as fallback (desktop only)...`);
             const directUrl = url.replace(API_BASE, API_DIRECT);
             try {
                 return await fetch(directUrl, options);
@@ -434,8 +464,9 @@ async function searchAnime(query) {
     // 3. Page size limit appears to be around 100 (422 error for 1000)
     const encodedQuery = encodeURIComponent(query);
     
-    // Use direct API if we've determined proxy is blocked
-    const baseUrl = useDirectAPI ? API_DIRECT : API_BASE;
+    // On mobile, ALWAYS use proxy (never direct API) to avoid CORS errors
+    // On desktop, use direct API only if proxy is blocked and we've confirmed direct works
+    const baseUrl = (isMobileDevice || !useDirectAPI) ? API_BASE : API_DIRECT;
     
     // Primary: Use global search endpoint
     // Include animesynonyms to search English names
@@ -523,13 +554,16 @@ async function searchAnime(query) {
     // Fallback: Fetch anime list with pagination and filter client-side
     console.log('Search endpoints returned no results. Trying paginated fetch with client-side filtering...');
     
+    // On mobile, always use proxy; on desktop, use direct API only if confirmed working
+    const paginationBaseUrl = (isMobileDevice || !useDirectAPI) ? API_BASE : API_DIRECT;
+    
     // Try fetching multiple pages if needed
     let allAnime = [];
     const pageSize = 100; // Safe page size to avoid 422 errors
     
     for (let page = 1; page <= 5; page++) { // Try up to 5 pages (500 anime)
         try {
-            const url = `${baseUrl}/anime/?include=animethemes.animethemeentries.videos,animethemes.song,animethemes.song.artists,animesynonyms&page[number]=${page}&page[size]=${pageSize}`;
+            const url = `${paginationBaseUrl}/anime/?include=animethemes.animethemeentries.videos,animethemes.song,animethemes.song.artists,animesynonyms&page[number]=${page}&page[size]=${pageSize}`;
             console.log(`Fetching page ${page}...`);
             
             const response = await fetchWithFallback(url, {
@@ -594,7 +628,7 @@ async function searchAnime(query) {
     console.log('All search endpoints failed. Testing basic API connectivity...');
     
     const testUrls = [
-        `${baseUrl}/anime/?page[size]=5`,
+        `${paginationBaseUrl}/anime/?page[size]=5`,
     ];
     
     for (const testUrl of testUrls) {
@@ -710,7 +744,8 @@ async function fetchAnimeWithIncludes(animeIds) {
     try {
         // Fetch anime by IDs using filter[id] - include synonyms for English name search
         const idsParam = animeIds.join(',');
-        const baseUrl = useDirectAPI ? API_DIRECT : API_BASE;
+        // On mobile, ALWAYS use proxy (never direct API) to avoid CORS errors
+        const baseUrl = (isMobileDevice || !useDirectAPI) ? API_BASE : API_DIRECT;
         const url = `${baseUrl}/anime/?filter[id]=${idsParam}&include=animethemes.animethemeentries.videos,animethemes.song,animethemes.song.artists,animesynonyms&page[size]=${animeIds.length}`;
         
         const response = await fetchWithFallback(url, {
@@ -741,7 +776,8 @@ async function enhanceAnimeWithSynonyms(animeList) {
         // Fetch synonyms for anime that don't have them
         const animeIds = needsSynonyms.map(a => a.id);
         const idsParam = animeIds.join(',');
-        const baseUrl = useDirectAPI ? API_DIRECT : API_BASE;
+        // On mobile, ALWAYS use proxy (never direct API) to avoid CORS errors
+        const baseUrl = (isMobileDevice || !useDirectAPI) ? API_BASE : API_DIRECT;
         const url = `${baseUrl}/anime/?filter[id]=${idsParam}&include=animesynonyms&page[size]=${animeIds.length}`;
         
         const response = await fetchWithFallback(url, {
@@ -2189,7 +2225,8 @@ async function loadFeaturedOpenings() {
         
         console.log(`Loading featured openings for ${season} ${year}...`);
         
-        const baseUrl = useDirectAPI ? API_DIRECT : API_BASE;
+        // On mobile, ALWAYS use proxy (never direct API) to avoid CORS errors
+        const baseUrl = (isMobileDevice || !useDirectAPI) ? API_BASE : API_DIRECT;
         
         // Try using the animeyear endpoint first (returns grouped by season)
         // Include images for preview backgrounds
