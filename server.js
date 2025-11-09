@@ -144,7 +144,12 @@ app.use('/api/proxy/animethemes', async (req, res, next) => {
             method: 'GET',
             headers: {
                 'Accept': 'application/json',
-                'User-Agent': 'Kaimaku/1.0'
+                'Accept-Language': 'en-US,en;q=0.9',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Referer': 'https://animethemes.moe/',
+                'Origin': 'https://animethemes.moe',
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache'
             },
             timeout: 30000 // 30 second timeout
         };
@@ -185,10 +190,20 @@ app.use('/api/proxy/animethemes', async (req, res, next) => {
         // Forward response status and headers
         if (proxyResponse.status !== 200) {
             console.error(`[PROXY] API returned ${proxyResponse.status} for ${fullUrl}`);
-            return res.status(proxyResponse.status).json({ 
-                error: `API returned ${proxyResponse.status}`,
-                url: fullUrl
-            });
+            console.error(`[PROXY] Response headers:`, proxyResponse.headers);
+            console.error(`[PROXY] Response body (first 500 chars):`, proxyResponse.data.substring(0, 500));
+            
+            // Try to parse error response if it's JSON
+            let errorData = { error: `API returned ${proxyResponse.status}` };
+            try {
+                const parsedError = JSON.parse(proxyResponse.data);
+                errorData = parsedError;
+            } catch (e) {
+                // Not JSON, use raw data
+                errorData.message = proxyResponse.data.substring(0, 200);
+            }
+            
+            return res.status(proxyResponse.status).json(errorData);
         }
         
         // Parse and return JSON data
