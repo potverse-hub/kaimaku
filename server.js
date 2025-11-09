@@ -11,17 +11,30 @@ const PORT = process.env.PORT || 3000;
 
 // Middleware
 const allowedOrigins = process.env.ALLOWED_ORIGINS 
-    ? process.env.ALLOWED_ORIGINS.split(',') 
+    ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
     : ['http://localhost:3000'];
+
+// Add Render URL automatically if in production
+if (process.env.NODE_ENV === 'production' && process.env.RENDER_EXTERNAL_URL) {
+    allowedOrigins.push(process.env.RENDER_EXTERNAL_URL);
+}
 
 app.use(cors({
     origin: function (origin, callback) {
         // Allow requests with no origin (mobile apps, curl, etc.)
         if (!origin) return callback(null, true);
-        if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV !== 'production') {
-            callback(null, true);
+        
+        // In production, check against allowed origins
+        if (process.env.NODE_ENV === 'production') {
+            if (allowedOrigins.indexOf(origin) !== -1) {
+                callback(null, true);
+            } else {
+                console.warn(`CORS blocked origin: ${origin}. Allowed: ${allowedOrigins.join(', ')}`);
+                callback(new Error('Not allowed by CORS'));
+            }
         } else {
-            callback(new Error('Not allowed by CORS'));
+            // In development, allow all origins
+            callback(null, true);
         }
     },
     credentials: true

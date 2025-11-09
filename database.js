@@ -11,9 +11,12 @@ if (!process.env.DATABASE_URL) {
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-    connectionTimeoutMillis: 10000, // 10 second timeout
+    connectionTimeoutMillis: 20000, // 20 second timeout (increased for Supabase)
     idleTimeoutMillis: 30000,
-    max: 20 // Maximum number of clients in the pool
+    max: 10, // Reduced for Supabase connection pooling
+    // Supabase connection pooling settings
+    statement_timeout: 30000,
+    query_timeout: 30000
 });
 
 // Test connection
