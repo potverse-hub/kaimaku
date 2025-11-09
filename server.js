@@ -46,6 +46,7 @@ const sessionConfig = {
     secret: process.env.SESSION_SECRET || 'kaimaku-secret-key-change-in-production',
     resave: false,
     saveUninitialized: false,
+    rolling: true, // Reset expiration on every request to keep session alive
     name: 'kaimaku.sid', // Custom session name
     cookie: { 
         secure: process.env.NODE_ENV === 'production', // HTTPS in production
