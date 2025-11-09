@@ -70,6 +70,23 @@ async function initializeDatabase() {
             CREATE INDEX IF NOT EXISTS idx_ratings_user_id ON ratings(user_id)
         `);
 
+        // Note: user_sessions table is created by connect-pg-simple
+        // But we can verify it exists
+        console.log('🔄 Verifying session table...');
+        const sessionTableCheck = await pool.query(`
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'user_sessions'
+            )
+        `);
+        
+        if (sessionTableCheck.rows[0].exists) {
+            console.log('✅ Session table exists');
+        } else {
+            console.log('⚠️  Session table does not exist yet (will be created by connect-pg-simple)');
+        }
+
         console.log('✅ Database tables initialized successfully');
         return true;
     } catch (error) {

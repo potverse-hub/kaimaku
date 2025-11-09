@@ -46,27 +46,48 @@ const sessionConfig = {
     secret: process.env.SESSION_SECRET || 'kaimaku-secret-key-change-in-production',
     resave: false,
     saveUninitialized: false,
+    name: 'kaimaku.sid', // Custom session name
     cookie: { 
         secure: process.env.NODE_ENV === 'production', // HTTPS in production
         httpOnly: true,
         maxAge: 24 * 60 * 60 * 1000, // 24 hours
-        sameSite: 'lax'
+        sameSite: 'lax', // 'lax' works for same-site requests
+        path: '/' // Ensure cookie is available for all paths
+        // Don't set domain - let browser handle it automatically
     }
 };
 
 // Use PostgreSQL session store in production, MemoryStore in development
 if (process.env.NODE_ENV === 'production' && process.env.DATABASE_URL) {
-    sessionConfig.store = new pgSession({
-        pool: db.pool,
-        tableName: 'user_sessions', // Table name for sessions
-        createTableIfMissing: true // Automatically create table if it doesn't exist
-    });
-    console.log('✅ Using PostgreSQL session store');
+    try {
+        sessionConfig.store = new pgSession({
+            pool: db.pool,
+            tableName: 'user_sessions', // Table name for sessions
+            createTableIfMissing: true, // Automatically create table if it doesn't exist
+            pruneSessionInterval: false // Disable automatic pruning (Supabase handles it)
+        });
+        console.log('✅ Using PostgreSQL session store');
+    } catch (error) {
+        console.error('❌ Error setting up PostgreSQL session store:', error);
+        console.log('⚠️  Falling back to MemoryStore (not recommended for production)');
+    }
 } else {
     console.log('⚠️  Using MemoryStore (development mode)');
 }
 
 app.use(session(sessionConfig));
+
+// Session debugging middleware (only in development)
+if (process.env.NODE_ENV !== 'production') {
+    app.use((req, res, next) => {
+        console.log('Session middleware:', {
+            sessionId: req.sessionID,
+            userId: req.session.userId,
+            url: req.url
+        });
+        next();
+    });
+}
 
 // Serve static files (HTML, CSS, JS)
 app.use(express.static(__dirname));
@@ -147,7 +168,14 @@ app.post('/api/register', async (req, res) => {
         await db.createUser(username, hashedPassword);
         
         req.session.userId = username;
-        res.json({ success: true, username });
+        // Save session explicitly
+        req.session.save((err) => {
+            if (err) {
+                console.error('Error saving session:', err);
+                return res.status(500).json({ error: 'Failed to save session' });
+            }
+            res.json({ success: true, username });
+        });
     } catch (error) {
         console.error('Error registering user:', error);
         res.status(500).json({ error: 'Failed to register user' });
@@ -174,7 +202,14 @@ app.post('/api/login', async (req, res) => {
         }
         
         req.session.userId = username;
-        res.json({ success: true, username });
+        // Save session explicitly to ensure it's persisted
+        req.session.save((err) => {
+            if (err) {
+                console.error('Error saving session:', err);
+                return res.status(500).json({ error: 'Failed to save session' });
+            }
+            res.json({ success: true, username });
+        });
     } catch (error) {
         console.error('Error logging in:', error);
         res.status(500).json({ error: 'Failed to login' });
@@ -182,11 +217,25 @@ app.post('/api/login', async (req, res) => {
 });
 
 app.post('/api/logout', (req, res) => {
-    req.session.destroy();
-    res.json({ success: true });
+    req.session.destroy((err) => {
+        if (err) {
+            console.error('Error destroying session:', err);
+            return res.status(500).json({ error: 'Failed to logout' });
+        }
+        res.json({ success: true });
+    });
 });
 
 app.get('/api/me', (req, res) => {
+    // Debug session info (only in development)
+    if (process.env.NODE_ENV !== 'production') {
+        console.log('Session check:', {
+            sessionId: req.sessionID,
+            userId: req.session.userId,
+            cookie: req.headers.cookie ? 'present' : 'missing'
+        });
+    }
+    
     if (req.session.userId) {
         res.json({ username: req.session.userId });
     } else {
