@@ -98,8 +98,12 @@ app.use((req, res, next) => {
 });
 
 // API Proxy endpoint to avoid CORS issues
-// Use catch-all route - must be before static file serving
-app.get('/api/proxy/animethemes*', async (req, res) => {
+// Use middleware to catch all routes starting with /api/proxy/animethemes
+app.use('/api/proxy/animethemes', async (req, res, next) => {
+    // Only handle GET requests
+    if (req.method !== 'GET') {
+        return next();
+    }
     try {
         // Extract the path after /api/proxy/animethemes
         // req.path will be like '/api/proxy/animethemes/animeyear/2025'
@@ -171,6 +175,7 @@ app.get('/api/proxy/animethemes*', async (req, res) => {
         console.error('Proxy error:', error);
         res.status(500).json({ error: 'Failed to proxy request', message: error.message });
     }
+    // Don't call next() - we've handled the request
 });
 
 // Serve static files (HTML, CSS, JS)
