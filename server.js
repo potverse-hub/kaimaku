@@ -138,19 +138,19 @@ app.use('/api/proxy/animethemes', async (req, res, next) => {
         const http = require('http');
         
         const parsedUrl = new URL(fullUrl);
+        
+        // Build headers - start minimal and add more if needed
+        // The API docs say headers are not required, but we'll use minimal browser-like headers
+        const headers = {
+            'Accept': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        };
+        
         const options = {
             hostname: parsedUrl.hostname,
             path: parsedUrl.pathname + parsedUrl.search,
             method: 'GET',
-            headers: {
-                'Accept': 'application/json',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Referer': 'https://animethemes.moe/',
-                'Origin': 'https://animethemes.moe',
-                'Cache-Control': 'no-cache',
-                'Pragma': 'no-cache'
-            },
+            headers: headers,
             timeout: 30000 // 30 second timeout
         };
         
