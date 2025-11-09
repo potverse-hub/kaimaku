@@ -105,16 +105,13 @@ app.use('/api/proxy/animethemes', async (req, res, next) => {
         return next();
     }
     try {
-        // Extract the path after /api/proxy/animethemes
-        // req.path will be like '/api/proxy/animethemes/animeyear/2025'
-        let apiPath = req.path;
-        if (apiPath.startsWith('/api/proxy/animethemes')) {
-            apiPath = apiPath.substring('/api/proxy/animethemes'.length);
-        }
+        // With app.use('/api/proxy/animethemes', ...), req.path is already stripped
+        // So req.path will be like '/animeyear/2025' or just '/'
+        let apiPath = req.path || '/';
         
-        // If apiPath is empty, default to root
-        if (!apiPath || apiPath === '') {
-            apiPath = '/';
+        // Ensure it starts with /
+        if (!apiPath.startsWith('/')) {
+            apiPath = '/' + apiPath;
         }
         
         // Get query string from original URL
