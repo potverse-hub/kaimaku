@@ -75,19 +75,23 @@ if (process.env.NODE_ENV === 'production' && process.env.DATABASE_URL) {
     console.log('⚠️  Using MemoryStore (development mode)');
 }
 
-app.use(session(sessionConfig));
+// Apply session middleware
+const sessionMiddleware = session(sessionConfig);
+app.use(sessionMiddleware);
 
-// Session debugging middleware (only in development)
-if (process.env.NODE_ENV !== 'production') {
-    app.use((req, res, next) => {
-        console.log('Session middleware:', {
-            sessionId: req.sessionID,
-            userId: req.session.userId,
-            url: req.url
+// Session debugging middleware (log session info for auth endpoints)
+app.use((req, res, next) => {
+    // Only log for auth-related endpoints to avoid spam
+    if (req.path.startsWith('/api/login') || req.path.startsWith('/api/register') || 
+        req.path.startsWith('/api/me') || (req.path.startsWith('/api/ratings') && req.method === 'POST')) {
+        console.log(`[${req.method} ${req.path}] Session:`, {
+            sessionId: req.sessionID ? req.sessionID.substring(0, 10) + '...' : 'none',
+            userId: req.session.userId || 'none',
+            cookiePresent: req.headers.cookie ? 'yes' : 'no'
         });
-        next();
-    });
-}
+    }
+    next();
+});
 
 // Serve static files (HTML, CSS, JS)
 app.use(express.static(__dirname));
@@ -282,6 +286,7 @@ app.post('/api/ratings', async (req, res) => {
 const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`\n✅ Server running on port ${PORT}`);
     console.log(`🌐 Server is ready to accept connections\n`);
+    console.log(`📊 Session store: ${sessionConfig.store ? 'PostgreSQL' : 'MemoryStore'}\n`);
     
     // Initialize database in background (non-blocking)
     initializeDatabaseInBackground();
