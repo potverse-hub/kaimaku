@@ -97,20 +97,35 @@ app.use((req, res, next) => {
     next();
 });
 
+// Test endpoint to verify proxy is working
+app.get('/api/proxy/test', (req, res) => {
+    res.json({ message: 'Proxy endpoint is working!', timestamp: new Date().toISOString() });
+});
+
 // API Proxy endpoint to avoid CORS issues
-// Use middleware to catch all routes starting with /api/proxy/animethemes
-app.use('/api/proxy/animethemes', async (req, res, next) => {
+// Handle all routes under /api/proxy/animethemes
+app.all('/api/proxy/animethemes*', async (req, res, next) => {
     // Only handle GET requests
     if (req.method !== 'GET') {
-        return next();
+        return res.status(405).json({ error: 'Method not allowed' });
     }
     try {
-        // With app.use('/api/proxy/animethemes', ...), req.url is relative to mount point
-        // req.url will be like '/animeyear/2025?include=...' (already stripped)
-        // Use req.url directly as it includes both path and query string
-        let apiPath = req.url || '/';
+        // Extract path from originalUrl (full path) or req.url
+        // req.originalUrl will be like '/api/proxy/animethemes/animeyear/2025?include=...'
+        const fullPath = req.originalUrl || req.url || '';
         
-        // Remove query string temporarily to ensure path starts with /
+        // Strip the /api/proxy/animethemes prefix
+        let apiPath = fullPath;
+        if (apiPath.startsWith('/api/proxy/animethemes')) {
+            apiPath = apiPath.substring('/api/proxy/animethemes'.length);
+        }
+        
+        // If empty, default to root
+        if (!apiPath || apiPath === '') {
+            apiPath = '/';
+        }
+        
+        // Split path and query
         const urlParts = apiPath.split('?');
         let pathPart = urlParts[0] || '/';
         const queryString = urlParts.length > 1 ? urlParts.slice(1).join('?') : '';
@@ -123,7 +138,7 @@ app.use('/api/proxy/animethemes', async (req, res, next) => {
         // Build full URL
         const fullUrl = `https://api.animethemes.moe${pathPart}${queryString ? '?' + queryString : ''}`;
         
-        console.log(`Proxying: ${req.method} ${req.originalUrl || req.url} -> ${fullUrl}`);
+        console.log(`[PROXY] ${req.method} ${req.originalUrl} -> ${fullUrl}`);
         
         // Use Node.js built-in http/https modules
         const https = require('https');
