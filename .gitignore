@@ -1,0 +1,7 @@
+node_modules/
+ratings.json
+users.json
+.env
+.env.local
+.DS_Store
+*.log
