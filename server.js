@@ -202,8 +202,28 @@ async function handleProxyRequest(req, res) {
         });
         
         if (proxyResponse.status !== 200) {
+            // Log the actual error response from API
+            let errorBody = '';
+            try {
+                const errorData = JSON.parse(proxyResponse.data);
+                errorBody = JSON.stringify(errorData);
+            } catch (e) {
+                errorBody = proxyResponse.data.substring(0, 200); // First 200 chars
+            }
             console.error(`Proxy error: API returned ${proxyResponse.status}`);
-            return res.status(proxyResponse.status).json({ error: `API returned ${proxyResponse.status}` });
+            console.error(`Error response: ${errorBody}`);
+            console.error(`Response headers:`, proxyResponse.headers);
+            
+            // Return the actual error to client
+            try {
+                const errorData = JSON.parse(proxyResponse.data);
+                return res.status(proxyResponse.status).json(errorData);
+            } catch (e) {
+                return res.status(proxyResponse.status).json({ 
+                    error: `API returned ${proxyResponse.status}`,
+                    message: proxyResponse.data.substring(0, 500)
+                });
+            }
         }
         
         const data = JSON.parse(proxyResponse.data);
