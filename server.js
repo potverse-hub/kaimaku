@@ -168,7 +168,8 @@ app.use('/api/proxy/animethemes', async (req, res, next) => {
                     resolve({ 
                         status: proxyRes.statusCode, 
                         data: data,
-                        headers: proxyRes.headers
+                        headers: proxyRes.headers,
+                        statusMessage: proxyRes.statusMessage
                     });
                 });
             });
@@ -187,20 +188,60 @@ app.use('/api/proxy/animethemes', async (req, res, next) => {
             proxyReq.end();
         });
         
+        // Check for rate limiting headers
+        const rateLimitRemaining = proxyResponse.headers['x-ratelimit-remaining'];
+        const rateLimitLimit = proxyResponse.headers['x-ratelimit-limit'];
+        const retryAfter = proxyResponse.headers['retry-after'];
+        
+        if (rateLimitRemaining !== undefined) {
+            console.log(`[PROXY] Rate limit: ${rateLimitRemaining}/${rateLimitLimit} remaining`);
+        }
+        
         // Forward response status and headers
         if (proxyResponse.status !== 200) {
-            console.error(`[PROXY] API returned ${proxyResponse.status} for ${fullUrl}`);
-            console.error(`[PROXY] Response headers:`, proxyResponse.headers);
-            console.error(`[PROXY] Response body (first 500 chars):`, proxyResponse.data.substring(0, 500));
+            console.error(`[PROXY] API returned ${proxyResponse.status} ${proxyResponse.statusMessage || ''} for ${fullUrl}`);
+            console.error(`[PROXY] Response headers:`, JSON.stringify(proxyResponse.headers, null, 2));
+            
+            // Log response body safely
+            const responseBody = proxyResponse.data || '';
+            const bodyPreview = responseBody.length > 0 ? responseBody.substring(0, 1000) : '(empty)';
+            console.error(`[PROXY] Response body:`, bodyPreview);
+            
+            // Check if it's a rate limit error
+            if (proxyResponse.status === 429 || (retryAfter && parseInt(retryAfter) > 0)) {
+                return res.status(429).json({ 
+                    error: 'Rate limit exceeded',
+                    message: 'Too many requests. Please try again later.',
+                    retryAfter: retryAfter
+                });
+            }
             
             // Try to parse error response if it's JSON
-            let errorData = { error: `API returned ${proxyResponse.status}` };
-            try {
-                const parsedError = JSON.parse(proxyResponse.data);
-                errorData = parsedError;
-            } catch (e) {
-                // Not JSON, use raw data
-                errorData.message = proxyResponse.data.substring(0, 200);
+            let errorData = { 
+                error: `API returned ${proxyResponse.status}`,
+                status: proxyResponse.status,
+                url: fullUrl
+            };
+            
+            if (responseBody.length > 0) {
+                try {
+                    const parsedError = JSON.parse(responseBody);
+                    errorData = { ...errorData, ...parsedError };
+                } catch (e) {
+                    // Not JSON, use raw data
+                    errorData.message = responseBody.substring(0, 500);
+                }
+            }
+            
+            // For 403 errors, check if it's a rate limit or blocking issue
+            if (proxyResponse.status === 403) {
+                if (rateLimitRemaining !== undefined && parseInt(rateLimitRemaining) === 0) {
+                    errorData.message = 'Rate limit exceeded. Please try again later.';
+                    errorData.retryAfter = retryAfter;
+                } else {
+                    errorData.message = 'The API is blocking this request. This may be due to bot detection or IP blocking.';
+                    errorData.suggestion = 'The API may be blocking requests from this server IP.';
+                }
             }
             
             return res.status(proxyResponse.status).json(errorData);
