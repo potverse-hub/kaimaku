@@ -106,24 +106,32 @@ app.use('/api/proxy/animethemes', async (req, res, next) => {
     }
     
     try {
-        // When using app.use, Express strips the mount point from req.path
-        // So req.path will be like /search/ or /animeyear/2025
-        // req.url contains the path + query string (also stripped)
-        // req.originalUrl contains the full original URL including mount point
+        // Extract the API path from the original URL
+        // req.originalUrl contains the full path: /api/proxy/animethemes/search/?q=test
+        // We need to extract: /search/?q=test
+        const originalUrl = req.originalUrl || req.url;
+        const mountPath = '/api/proxy/animethemes';
         
-        // Use req.url which has the path and query string (mount point already stripped by Express)
-        const apiPathWithQuery = req.url || req.path;
+        let apiPathWithQuery = originalUrl;
         
-        // Split path and query
-        const [apiPath, ...queryParts] = apiPathWithQuery.split('?');
-        const queryString = queryParts.length > 0 ? queryParts.join('?') : '';
+        // Remove the mount path to get the API path
+        if (apiPathWithQuery.startsWith(mountPath)) {
+            apiPathWithQuery = apiPathWithQuery.substring(mountPath.length);
+        }
+        
+        // If empty, default to root
+        if (!apiPathWithQuery || apiPathWithQuery === '') {
+            apiPathWithQuery = '/';
+        }
         
         // Ensure path starts with /
-        const cleanApiPath = apiPath.startsWith('/') ? apiPath : '/' + apiPath;
+        if (!apiPathWithQuery.startsWith('/')) {
+            apiPathWithQuery = '/' + apiPathWithQuery;
+        }
         
-        const fullUrl = `https://api.animethemes.moe${cleanApiPath}${queryString ? '?' + queryString : ''}`;
+        const fullUrl = `https://api.animethemes.moe${apiPathWithQuery}`;
         
-        console.log(`[PROXY] ${req.method} ${req.originalUrl || req.url} -> ${fullUrl}`);
+        console.log(`[PROXY] ${req.method} ${originalUrl} -> ${fullUrl}`);
         
         // Use Node.js built-in http/https modules
         const https = require('https');
