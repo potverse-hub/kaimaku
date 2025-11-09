@@ -305,30 +305,16 @@ async function handleSearch() {
         displaySearchResults(results);
     } catch (error) {
         console.error('Search error:', error);
-        console.error('API_BASE:', API_BASE);
-        console.error('Error details:', {
-            name: error.name,
-            message: error.message,
-            stack: error.stack
-        });
-        
         let errorMessage = 'Error searching. ';
-        const isUsingProxy = API_BASE.includes('/api/proxy/animethemes');
         
-        if (error.name === 'AbortError') {
-            errorMessage += 'Request timed out. Please try again.';
-        } else if (error.message && (error.message.includes('CORS') || (error.message.includes('Failed to fetch') && !isUsingProxy))) {
+        if (error.message.includes('CORS')) {
             errorMessage += 'CORS error detected. The API may block direct browser requests.';
-        } else if (error.message && (error.message.includes('Failed to fetch') || error.message.includes('NetworkError'))) {
-            if (isUsingProxy) {
-                errorMessage += 'Unable to reach the server. The proxy may be down. Please try again later.';
-            } else {
-                errorMessage += 'Network error. Please check your internet connection and try again.';
-            }
-        } else if (error.message && error.message.includes('status')) {
+        } else if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+            errorMessage += 'Network error. Please check your internet connection and try again.';
+        } else if (error.message.includes('status')) {
             errorMessage += `API error: ${error.message}`;
         } else {
-            errorMessage += error.message || 'Unknown error. Please try again.';
+            errorMessage += error.message || 'Please try again or check the browser console for details.';
         }
         
         if (searchResults) {
@@ -2168,29 +2154,15 @@ async function loadFeaturedOpenings() {
         createFeaturedCarousel(featuredItems, featuredList);
     } catch (error) {
         console.error('Error loading featured openings:', error);
-        console.error('API_BASE:', API_BASE);
-        console.error('Error details:', {
-            name: error.name,
-            message: error.message,
-            stack: error.stack
-        });
         
         // More specific error messages
         let errorMessage = 'Unable to load featured openings. ';
-        const isUsingProxy = API_BASE.includes('/api/proxy/animethemes');
-        
         if (error.name === 'AbortError') {
             errorMessage += 'Request timed out. Please check your connection and try again.';
-        } else if (error.message && (error.message.includes('Failed to fetch') || error.message.includes('NetworkError'))) {
-            if (isUsingProxy) {
-                errorMessage += 'Unable to reach the server. The proxy may be down. Please try again later.';
-            } else {
-                errorMessage += 'Network error. Please check your connection.';
-            }
-        } else if (error.message && error.message.includes('CORS')) {
-            errorMessage += 'CORS error. The API may block direct browser requests.';
+        } else if (error.message && error.message.includes('Failed to fetch')) {
+            errorMessage += 'Network error. Please check your connection.';
         } else {
-            errorMessage += error.message || 'Please try again later.';
+            errorMessage += 'Please try again later.';
         }
         
         featuredList.innerHTML = `<p style="color: var(--text-muted); text-align: center; padding: 2rem;">${errorMessage}</p>`;

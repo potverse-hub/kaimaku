@@ -97,224 +97,61 @@ app.use((req, res, next) => {
     next();
 });
 
-// Test endpoint to verify API connectivity
-app.get('/api/test-api', async (req, res) => {
-    try {
-        const https = require('https');
-        const testUrl = 'https://api.animethemes.moe/animeyear/2024';
-        
-        console.log(`[TEST] Testing direct API call to: ${testUrl}`);
-        
-        const options = {
-            hostname: 'api.animethemes.moe',
-            path: '/animeyear/2024',
-            method: 'GET',
-            headers: {
-                'Accept': 'application/json',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-        };
-        
-        const response = await new Promise((resolve, reject) => {
-            const req = https.request(options, (res) => {
-                let data = '';
-                res.on('data', (chunk) => { data += chunk; });
-                res.on('end', () => {
-                    resolve({ 
-                        status: res.statusCode, 
-                        data: data,
-                        headers: res.headers,
-                        statusMessage: res.statusMessage
-                    });
-                });
-            });
-            req.on('error', reject);
-            req.setTimeout(10000, () => { req.destroy(); reject(new Error('Timeout')); });
-            req.end();
-        });
-        
-        res.json({
-            success: response.status === 200,
-            status: response.status,
-            statusMessage: response.statusMessage,
-            headers: response.headers,
-            bodyPreview: response.data.substring(0, 500),
-            rateLimitRemaining: response.headers['x-ratelimit-remaining'],
-            rateLimitLimit: response.headers['x-ratelimit-limit']
-        });
-    } catch (error) {
-        res.status(500).json({ error: error.message, stack: error.stack });
-    }
-});
-
 // API Proxy endpoint to avoid CORS issues
-// Use app.use to catch all paths under /api/proxy/animethemes
-app.use('/api/proxy/animethemes', async (req, res, next) => {
-    // Only handle GET requests for the proxy
-    if (req.method !== 'GET') {
-        return next();
-    }
-    
+app.get('/api/proxy/animethemes/*', async (req, res) => {
     try {
-        // Extract the API path from the original URL
-        // req.originalUrl contains the full path: /api/proxy/animethemes/search/?q=test
-        // We need to extract: /search/?q=test
-        const originalUrl = req.originalUrl || req.url;
-        const mountPath = '/api/proxy/animethemes';
+        // Get the path after /api/proxy/animethemes/
+        const apiPath = req.path.replace('/api/proxy/animethemes', '');
+        const queryString = req.url.split('?')[1] || '';
+        const fullUrl = `https://api.animethemes.moe${apiPath}${queryString ? '?' + queryString : ''}`;
         
-        let apiPathWithQuery = originalUrl;
-        
-        // Remove the mount path to get the API path
-        if (apiPathWithQuery.startsWith(mountPath)) {
-            apiPathWithQuery = apiPathWithQuery.substring(mountPath.length);
-        }
-        
-        // If empty, default to root
-        if (!apiPathWithQuery || apiPathWithQuery === '') {
-            apiPathWithQuery = '/';
-        }
-        
-        // Ensure path starts with /
-        if (!apiPathWithQuery.startsWith('/')) {
-            apiPathWithQuery = '/' + apiPathWithQuery;
-        }
-        
-        const fullUrl = `https://api.animethemes.moe${apiPathWithQuery}`;
-        
-        console.log(`[PROXY] ${req.method} ${originalUrl} -> ${fullUrl}`);
+        console.log(`Proxying request to: ${fullUrl}`);
         
         // Use Node.js built-in http/https modules
         const https = require('https');
         const http = require('http');
+        const url = require('url');
         
         const parsedUrl = new URL(fullUrl);
-        
-        // Build headers - start minimal and add more if needed
-        // The API docs say headers are not required, but we'll use minimal browser-like headers
-        const headers = {
-            'Accept': 'application/json',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        };
-        
         const options = {
             hostname: parsedUrl.hostname,
             path: parsedUrl.pathname + parsedUrl.search,
             method: 'GET',
-            headers: headers,
-            timeout: 30000 // 30 second timeout
+            headers: {
+                'Accept': 'application/json',
+                'User-Agent': 'Kaimaku/1.0'
+            }
         };
         
         const requestModule = parsedUrl.protocol === 'https:' ? https : http;
         
         const proxyResponse = await new Promise((resolve, reject) => {
-            const proxyReq = requestModule.request(options, (proxyRes) => {
+            const req = requestModule.request(options, (res) => {
                 let data = '';
-                
-                proxyRes.on('data', (chunk) => {
+                res.on('data', (chunk) => {
                     data += chunk;
                 });
-                
-                proxyRes.on('end', () => {
-                    resolve({ 
-                        status: proxyRes.statusCode, 
-                        data: data,
-                        headers: proxyRes.headers,
-                        statusMessage: proxyRes.statusMessage
-                    });
+                res.on('end', () => {
+                    resolve({ status: res.statusCode, data: data });
                 });
             });
             
-            proxyReq.on('error', (error) => {
-                console.error('[PROXY] Request error:', error);
+            req.on('error', (error) => {
                 reject(error);
             });
             
-            proxyReq.on('timeout', () => {
-                proxyReq.destroy();
-                reject(new Error('Request timeout'));
-            });
-            
-            proxyReq.setTimeout(30000);
-            proxyReq.end();
+            req.end();
         });
         
-        // Check for rate limiting headers
-        const rateLimitRemaining = proxyResponse.headers['x-ratelimit-remaining'];
-        const rateLimitLimit = proxyResponse.headers['x-ratelimit-limit'];
-        const retryAfter = proxyResponse.headers['retry-after'];
-        
-        if (rateLimitRemaining !== undefined) {
-            console.log(`[PROXY] Rate limit: ${rateLimitRemaining}/${rateLimitLimit} remaining`);
-        }
-        
-        // Forward response status and headers
         if (proxyResponse.status !== 200) {
-            console.error(`[PROXY] API returned ${proxyResponse.status} ${proxyResponse.statusMessage || ''} for ${fullUrl}`);
-            console.error(`[PROXY] Response headers:`, JSON.stringify(proxyResponse.headers, null, 2));
-            
-            // Log response body safely
-            const responseBody = proxyResponse.data || '';
-            const bodyPreview = responseBody.length > 0 ? responseBody.substring(0, 1000) : '(empty)';
-            console.error(`[PROXY] Response body:`, bodyPreview);
-            
-            // Check if it's a rate limit error
-            if (proxyResponse.status === 429 || (retryAfter && parseInt(retryAfter) > 0)) {
-                return res.status(429).json({ 
-                    error: 'Rate limit exceeded',
-                    message: 'Too many requests. Please try again later.',
-                    retryAfter: retryAfter
-                });
-            }
-            
-            // Try to parse error response if it's JSON
-            let errorData = { 
-                error: `API returned ${proxyResponse.status}`,
-                status: proxyResponse.status,
-                url: fullUrl
-            };
-            
-            if (responseBody.length > 0) {
-                try {
-                    const parsedError = JSON.parse(responseBody);
-                    errorData = { ...errorData, ...parsedError };
-                } catch (e) {
-                    // Not JSON, use raw data
-                    errorData.message = responseBody.substring(0, 500);
-                }
-            }
-            
-            // For 403 errors, check if it's a rate limit or blocking issue
-            if (proxyResponse.status === 403) {
-                if (rateLimitRemaining !== undefined && parseInt(rateLimitRemaining) === 0) {
-                    errorData.message = 'Rate limit exceeded. Please try again later.';
-                    errorData.retryAfter = retryAfter;
-                } else {
-                    errorData.message = 'The API is blocking this request. This may be due to bot detection or IP blocking.';
-                    errorData.suggestion = 'The API may be blocking requests from this server IP.';
-                }
-            }
-            
-            return res.status(proxyResponse.status).json(errorData);
+            return res.status(proxyResponse.status).json({ error: `API returned ${proxyResponse.status}` });
         }
         
-        // Parse and return JSON data
-        try {
-            const data = JSON.parse(proxyResponse.data);
-            res.json(data);
-        } catch (parseError) {
-            console.error('[PROXY] JSON parse error:', parseError);
-            res.status(500).json({ 
-                error: 'Failed to parse API response',
-                message: parseError.message
-            });
-        }
+        const data = JSON.parse(proxyResponse.data);
+        res.json(data);
     } catch (error) {
-        console.error('[PROXY] Error:', error);
-        res.status(500).json({ 
-            error: 'Failed to proxy request', 
-            message: error.message,
-            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-        });
+        console.error('Proxy error:', error);
+        res.status(500).json({ error: 'Failed to proxy request', message: error.message });
     }
 });
 
