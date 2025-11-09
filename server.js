@@ -98,15 +98,11 @@ app.use((req, res, next) => {
 });
 
 // API Proxy endpoint to avoid CORS issues
-app.get('/api/proxy/animethemes/*', async (req, res) => {
+// Use catch-all route pattern
+app.get('/api/proxy/animethemes/:path(*)', async (req, res) => {
     try {
-        // Get the path after /api/proxy/animethemes/
-        // req.path will be like '/api/proxy/animethemes/animeyear/2025?include=...'
-        // We need to extract everything after '/api/proxy/animethemes'
-        let apiPath = req.path;
-        if (apiPath.startsWith('/api/proxy/animethemes')) {
-            apiPath = apiPath.substring('/api/proxy/animethemes'.length);
-        }
+        // Get the path parameter (everything after /api/proxy/animethemes/)
+        const apiPath = '/' + (req.params.path || '');
         
         // Get query string from original URL
         const queryString = req.url.includes('?') ? req.url.split('?').slice(1).join('?') : '';
