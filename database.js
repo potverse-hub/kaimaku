@@ -25,7 +25,13 @@ pool.on('connect', () => {
 // Initialize database tables
 async function initializeDatabase() {
     try {
+        // Test database connection first
+        console.log('🔄 Testing database connection...');
+        await pool.query('SELECT NOW()');
+        console.log('✅ Database connection successful');
+        
         // Create users table
+        console.log('🔄 Creating users table...');
         await pool.query(`
             CREATE TABLE IF NOT EXISTS users (
                 username VARCHAR(50) PRIMARY KEY,
@@ -50,6 +56,7 @@ async function initializeDatabase() {
         `);
 
         // Create index for faster queries
+        console.log('🔄 Creating indexes...');
         await pool.query(`
             CREATE INDEX IF NOT EXISTS idx_ratings_theme_id ON ratings(theme_id)
         `);
@@ -57,10 +64,16 @@ async function initializeDatabase() {
             CREATE INDEX IF NOT EXISTS idx_ratings_user_id ON ratings(user_id)
         `);
 
-        console.log('✅ Database tables initialized');
+        console.log('✅ Database tables initialized successfully');
         return true;
     } catch (error) {
         console.error('❌ Error initializing database:', error);
+        console.error('Error message:', error.message);
+        console.error('Error code:', error.code);
+        if (error.message && error.message.includes('connect')) {
+            console.error('💡 Check your DATABASE_URL connection string');
+            console.error('💡 Make sure your Supabase project is active');
+        }
         return false;
     }
 }

@@ -219,22 +219,42 @@ app.post('/api/ratings', async (req, res) => {
 async function startServer() {
     try {
         // Initialize database tables
+        console.log('🔄 Initializing database...');
         const dbInitialized = await db.initializeDatabase();
         if (!dbInitialized) {
             console.error('⚠️  Failed to initialize database. Make sure DATABASE_URL is set.');
             console.error('💡 For local development, you can use file storage by setting USE_FILE_STORAGE=true');
             process.exit(1);
         }
+        console.log('✅ Database initialized successfully');
         
-        app.listen(PORT, () => {
-            console.log(`\n✅ Server running at http://localhost:${PORT}`);
+        // Start server - bind to 0.0.0.0 to allow external connections (required for Render)
+        const server = app.listen(PORT, '0.0.0.0', () => {
+            console.log(`\n✅ Server running on port ${PORT}`);
             console.log(`🗄️  Database: PostgreSQL`);
-            console.log(`\n💡 Make sure to open http://localhost:${PORT} in your browser\n`);
+            console.log(`🌐 Server is ready to accept connections\n`);
         });
+        
+        // Handle server errors
+        server.on('error', (error) => {
+            if (error.code === 'EADDRINUSE') {
+                console.error(`❌ Port ${PORT} is already in use`);
+            } else {
+                console.error('❌ Server error:', error);
+            }
+            process.exit(1);
+        });
+        
     } catch (error) {
         console.error('❌ Failed to start server:', error);
+        console.error('Error details:', error.message);
+        console.error('Stack:', error.stack);
         process.exit(1);
     }
 }
 
-startServer().catch(console.error);
+// Start the server
+startServer().catch((error) => {
+    console.error('❌ Unhandled error starting server:', error);
+    process.exit(1);
+});
